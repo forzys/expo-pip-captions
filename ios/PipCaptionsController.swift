@@ -97,6 +97,8 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   // Bumped on every start/stop so a pending start retry from an older session is dropped.
   private var startGeneration = 0
   private var stopRequestedByApp = false
+  // Set when the user tapped the window and `iosTapBehavior` asks to keep the session.
+  private var keepSessionAfterStop = false
 
   private var durationBaseMs: Double = 0
   private var durationAnchor: CFTimeInterval = 0
@@ -150,6 +152,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     snapshot = Self.sanitized(options)
     lastReason = nil
     stopRequestedByApp = false
+    keepSessionAfterStop = false
     startGeneration += 1
 
     guard AVPictureInPictureController.isPictureInPictureSupported() else {
@@ -625,9 +628,19 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
 
   func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
     let byUser = !stopRequestedByApp
+    let keepSession = keepSessionAfterStop && sessionLive
     stopRequestedByApp = false
+    keepSessionAfterStop = false
     active = false
     starting = false
+
+    if keepSession {
+      // The source view and controller stay in place, so the system shows the window
+      // again by itself the next time the app goes to the background.
+      emit("stop", ["userInitiated": true, "resumable": true])
+      return
+    }
+
     cleanupInlineSource()
     emit("stop", ["userInitiated": byUser])
   }
@@ -636,9 +649,21 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     _ pictureInPictureController: AVPictureInPictureController,
     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
   ) {
+    // Tapping the window always brings the app to the foreground; iOS offers no way to
+    // intercept that. What the app can decide is what happens to the session afterwards.
     DispatchQueue.main.async { [weak self] in
-      self?.stopPictureInPicture(byUser: true)
-      completionHandler(false)
+      guard let self else {
+        completionHandler(false)
+        return
+      }
+      self.emit("press")
+      if self.snapshot.string("iosTapBehavior") == "keep" {
+        self.keepSessionAfterStop = true
+        completionHandler(true)
+      } else {
+        self.stopPictureInPicture(byUser: true)
+        completionHandler(false)
+      }
     }
   }
 }

@@ -239,6 +239,19 @@ class PipCaptionsModule : Module() {
     }
   }
 
+  // A tap on the captions or the video. The header stays a drag handle.
+  private fun handlePress() {
+    sendStateChange("press")
+    if (snapshot.string("androidTapBehavior") == "openApp") {
+      runCatching {
+        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { intent ->
+          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          context.startActivity(intent)
+        }
+      }
+    }
+  }
+
   private fun close(userInitiated: Boolean) {
     val wasActive = active
     dismiss()
@@ -320,6 +333,9 @@ class PipCaptionsModule : Module() {
 
     val transcript = TextView(context).apply {
       setTextColor(Color.WHITE)
+      setOnClickListener {
+        handlePress()
+      }
     }
     val scroll = ScrollView(context).apply {
       isVerticalScrollBarEnabled = false
@@ -366,6 +382,9 @@ class PipCaptionsModule : Module() {
     val video = AspectFrameLayout(context).apply {
       setBackgroundColor(Color.BLACK)
       visibility = View.GONE
+      setOnClickListener {
+        handlePress()
+      }
       outlineProvider = object : ViewOutlineProvider() {
         override fun getOutline(view: View, outline: Outline) {
           outline.setRoundRect(0, 0, view.width, view.height, videoRadius)

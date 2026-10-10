@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- `press` event when the user taps the window.
+- `iosTapBehavior` (`stop` / `keep`) and `androidTapBehavior` (`none` / `openApp`).
+
 ## 0.3.1
 
 - iOS: the video layer is only created while a video is set, so a captions-only window is unchanged from 0.2.0.

@@ -184,6 +184,8 @@ Pass these to `start`, or to `update` to change them on the fly.
 | `draggable` | `boolean` | `true` | Android only. Drag by the header. |
 | `position` | `{ x, y }` in dp | `{ x: 16, y: 120 }` | Android only. Initial top-left position. |
 | `iosAudioSession` | `"playAndRecord" \| "playback" \| "none"` | `"playAndRecord"` | iOS only. See below. |
+| `iosTapBehavior` | `"stop" \| "keep"` | `"stop"` | iOS only. See [Taps](#taps). |
+| `androidTapBehavior` | `"none" \| "openApp"` | `"none"` | Android only. See [Taps](#taps). |
 
 ### Video options
 
@@ -204,12 +206,30 @@ How the window is laid out with a video:
 - **Android**: the video sits between the header and the captions, at the video's aspect ratio. The caption area uses the compact height.
 - Without caption text, the caption area is hidden; the placeholder only shows if you pass `placeholder` explicitly.
 
+### Taps
+
+A tap on the window emits a `press` event on both platforms, so the app decides what it means (navigate to a screen, pause, show controls in the app, ...).
+
+```ts
+addFloatingCaptionListener((event) => {
+  if (event.type === "press") {
+    navigation.navigate("LiveTranscript")
+  }
+})
+```
+
+What else happens differs, because the platforms give apps different amounts of control:
+
+- **iOS**: the system brings the app to the foreground on every tap. This cannot be turned off or replaced. `iosTapBehavior` only decides what happens to the session: `stop` (default) closes the window, `keep` leaves the session alive so the window reappears by itself the next time the app goes to the background (the `stop` event then carries `resumable: true`). `press` is also emitted when iOS restores the app from the window in other ways.
+- **Android**: nothing happens by default; `press` is yours to handle, and the app can stay in the background. `androidTapBehavior: "openApp"` additionally brings the app to the foreground. Taps on the captions and the video count; the header remains the drag handle.
+
 ### Events
 
 ```ts
 type FloatingCaptionEvent = {
-  type: "start" | "stop" | "error" | "videoReady" | "videoEnd" | "videoError"
+  type: "start" | "stop" | "press" | "error" | "videoReady" | "videoEnd" | "videoError"
   userInitiated?: boolean  // stop: closed by the user rather than by stopFloatingCaptionAsync()
+  resumable?: boolean      // iOS stop after a tap with iosTapBehavior "keep"
   message?: string         // error, videoError
   status: FloatingCaptionStatus
 }
@@ -220,7 +240,7 @@ type FloatingCaptionEvent = {
 ### iOS
 
 - The final size of the PiP window is decided by iOS. `variant` only provides a preferred size and aspect hint.
-- PiP content is not interactive. Taps are handled by the system (they show the PiP controls or restore the app), so there is no custom close button; users close the window with the system controls, which emits `stop` with `userInitiated: true`.
+- PiP content is not interactive. Taps are handled by the system and return to the app (see [Taps](#taps)), so there is no custom close button; users close the window with the system controls, which emits `stop` with `userInitiated: true`.
 - PiP can only start while the app is in the foreground and has an active, non-ambient audio session. If the session category is still `ambient` / `soloAmbient` when you call `start`, the module switches it to `playAndRecord` (or `playback`, per `iosAudioSession`) with `mixWithOthers`. If your app already configures the session (for example through a recording library), it is left untouched apart from being activated. Use `iosAudioSession: "none"` to opt out completely.
 - Video plays inside a video-call style PiP window, which is what allows custom captions on top of it. The trade-off is that the system play / pause / skip buttons are not available; control playback from your app.
 - Starting can take a moment right after launch or after returning to the foreground; the module retries for about 1.6 seconds, then emits `error`.

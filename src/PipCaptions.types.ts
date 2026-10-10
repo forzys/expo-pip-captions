@@ -80,6 +80,21 @@ export type FloatingCaptionOptions = {
     /** Android only. Initial top-left position in dp. Defaults to `{ x: 16, y: 120 }`. */
     position?: { x: number; y: number }
     /**
+     * iOS only. What happens to the session after the user taps the window. The tap itself
+     * always brings the app to the foreground (the system does not let apps change that)
+     * and emits `press`.
+     * - `stop` (default): the window is closed.
+     * - `keep`: the session stays alive and the window comes back by itself the next time
+     *   the app goes to the background.
+     */
+    iosTapBehavior?: "stop" | "keep"
+    /**
+     * Android only. What a tap on the captions or the video does besides emitting `press`.
+     * - `none` (default): nothing; handle the `press` event yourself.
+     * - `openApp`: brings the app to the foreground. The overlay stays.
+     */
+    androidTapBehavior?: "none" | "openApp"
+    /**
      * iOS only. Audio session category applied on start when the session is still
      * `ambient` / `soloAmbient`. Picture in Picture needs an active, non-ambient
      * session. Use `none` if the app manages the audio session itself.
@@ -139,12 +154,17 @@ export type FloatingCaptionStatus = {
 }
 
 export type FloatingCaptionEvent = {
-    type: "start" | "stop" | "error" | "videoReady" | "videoEnd" | "videoError"
+    type: "start" | "stop" | "press" | "error" | "videoReady" | "videoEnd" | "videoError"
     /**
      * `stop` only: true when the user dismissed the surface (Android close button,
      * iOS system PiP controls) instead of the app calling `stopFloatingCaptionAsync`.
      */
     userInitiated?: boolean
+    /**
+     * iOS `stop` only: true when the window went away because of a tap with
+     * `iosTapBehavior: "keep"`; it will be shown again when the app goes to the background.
+     */
+    resumable?: boolean
     /** iOS only. App state when the event happened, to tell a background stop from a foreground one. */
     appState?: "active" | "inactive" | "background"
     /** `error` and `videoError` only. */

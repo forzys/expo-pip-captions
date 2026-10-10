@@ -173,6 +173,23 @@ const { video } = await getFloatingCaptionStatusAsync() // { playing, positionMs
 | `position` | `{ x, y }`（dp） | `{ x: 16, y: 120 }` | 仅 Android，初始左上角位置。 |
 | `iosAudioSession` | `"playAndRecord" \| "playback" \| "none"` | `"playAndRecord"` | 仅 iOS，见下。 |
 
+### 点击行为
+
+点击小窗在两端都会触发 `press` 事件，具体做什么由应用决定（跳转页面、暂停等）。
+
+```ts
+addFloatingCaptionListener((event) => {
+  if (event.type === "press") {
+    navigation.navigate("LiveTranscript")
+  }
+})
+```
+
+除事件之外的行为两端不同，因为系统给应用的控制权不同：
+
+- **iOS**：每次点击系统都会把应用带回前台，这一点无法关闭或替换。`iosTapBehavior` 只决定之后会话的去留：`stop`（默认）关闭小窗；`keep` 保留会话，应用下次进入后台时小窗自动重新出现（此时 `stop` 事件带 `resumable: true`）。系统以其他方式从小窗恢复应用时也会触发 `press`。
+- **Android**：默认不做任何事，只触发 `press`，应用可以继续留在后台；`androidTapBehavior: "openApp"` 会额外把应用带回前台。点击字幕区和视频区有效，顶部栏仍是拖动手柄。
+
 ## 平台注意事项
 
 ### iOS
