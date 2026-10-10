@@ -3,9 +3,9 @@ import PipCaptionsModule from "./PipCaptionsModule"
 import type {
     FloatingCaptionAppearance,
     FloatingCaptionEvent,
-    FloatingCaptionSnapshot,
     FloatingCaptionStartOptions,
     FloatingCaptionSubscription,
+    FloatingCaptionUpdate,
 } from "./PipCaptions.types"
 
 export type * from "./PipCaptions.types"
@@ -26,9 +26,17 @@ const toNativeAppearance = (appearance: FloatingCaptionAppearance) => {
     return result
 }
 
-const toNativeSnapshot = (snapshot: Partial<FloatingCaptionStartOptions>) => {
-    const { appearance, ...rest } = snapshot
-    return appearance ? { ...rest, appearance: toNativeAppearance(appearance) } : rest
+const toNativeSnapshot = (snapshot: FloatingCaptionUpdate & { title?: string }) => {
+    const { appearance, video, ...rest } = snapshot
+    const result: Record<string, unknown> = rest
+    if (appearance) {
+        result.appearance = toNativeAppearance(appearance)
+    }
+    if (video !== undefined) {
+        // null does not survive the bridge on every platform; false means "no video" natively.
+        result.video = video ?? false
+    }
+    return result
 }
 
 export const getFloatingCaptionStatusAsync = () => PipCaptionsModule.getStatusAsync()
@@ -51,12 +59,16 @@ export const startFloatingCaptionAsync = (options: FloatingCaptionStartOptions) 
 
 /**
  * Merges `snapshot` into the current one, so options passed to
- * `startFloatingCaptionAsync` stay in effect unless overridden here.
+ * `startFloatingCaptionAsync` stay in effect unless overridden here. Also how the
+ * video is controlled: `{ video: { paused: true } }`, `{ video: { uri } }`, `{ video: null }`.
  */
-export const updateFloatingCaptionAsync = (snapshot: Partial<FloatingCaptionSnapshot>) =>
+export const updateFloatingCaptionAsync = (snapshot: FloatingCaptionUpdate) =>
     PipCaptionsModule.updateAsync(toNativeSnapshot(snapshot))
 
 export const pauseFloatingCaptionAsync = (paused: boolean) => PipCaptionsModule.pauseAsync(paused)
+
+/** Seeks the video playing in the floating window. No-op when there is none. */
+export const seekFloatingVideoAsync = (positionMs: number) => PipCaptionsModule.seekVideoAsync(positionMs)
 
 export const stopFloatingCaptionAsync = () => PipCaptionsModule.stopAsync()
 
@@ -70,6 +82,7 @@ const PipCaptions = {
     startAsync: startFloatingCaptionAsync,
     updateAsync: updateFloatingCaptionAsync,
     pauseAsync: pauseFloatingCaptionAsync,
+    seekVideoAsync: seekFloatingVideoAsync,
     stopAsync: stopFloatingCaptionAsync,
     addListener: addFloatingCaptionListener,
 }

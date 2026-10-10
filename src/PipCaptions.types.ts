@@ -32,6 +32,23 @@ export type FloatingCaptionAppearance = {
     cornerRadius?: number
 }
 
+export type FloatingCaptionVideo = {
+    /** Remote URL (mp4, HLS, ...), `file://` URL or absolute file path. */
+    uri: string
+    /** HTTP headers sent with remote requests. */
+    headers?: Record<string, string>
+    /** Defaults to false: playback starts as soon as the video is ready. */
+    paused?: boolean
+    muted?: boolean
+    /** 0 to 1. Defaults to 1. */
+    volume?: number
+    loop?: boolean
+    /** Start position, applied once when `uri` is loaded. Use `seekFloatingVideoAsync` afterwards. */
+    positionMs?: number
+    /** How the picture fits the window. Defaults to `contain`. */
+    resizeMode?: "contain" | "cover"
+}
+
 export type FloatingCaptionOptions = {
     /** Size preset. Defaults to `regular`. */
     variant?: FloatingCaptionVariant
@@ -48,6 +65,11 @@ export type FloatingCaptionOptions = {
      * catalog on iOS, a drawable or mipmap resource name on Android.
      */
     iconName?: string
+    /**
+     * Plays a video in the floating window, with the captions drawn over it (iOS) or
+     * below it (Android). Pass `null` in an update to remove the video again.
+     */
+    video?: FloatingCaptionVideo | null
     /** Show the duration label in the header. Defaults to true. */
     showDuration?: boolean
     appearance?: FloatingCaptionAppearance
@@ -87,6 +109,15 @@ export type FloatingCaptionSnapshot = FloatingCaptionOptions & {
     targetLanguage?: string | null
 }
 
+/**
+ * Partial snapshot for `updateFloatingCaptionAsync`. `video` and `appearance` are merged
+ * one level deep, so `{ video: { paused: true } }` keeps the current `uri`.
+ */
+export type FloatingCaptionUpdate = Omit<Partial<FloatingCaptionSnapshot>, "video" | "appearance"> & {
+    video?: Partial<FloatingCaptionVideo> | null
+    appearance?: FloatingCaptionAppearance
+}
+
 export type FloatingCaptionStartOptions = FloatingCaptionSnapshot & {
     /** Not rendered. */
     title?: string
@@ -98,16 +129,23 @@ export type FloatingCaptionStatus = {
     permissionGranted: boolean
     platform: "ios" | "android" | "web" | "unknown"
     reason?: string
+    /** Present while a video is loaded. */
+    video?: {
+        playing: boolean
+        positionMs: number
+        /** Missing for live streams and until the video is ready. */
+        durationMs?: number
+    }
 }
 
 export type FloatingCaptionEvent = {
-    type: "start" | "stop" | "error"
+    type: "start" | "stop" | "error" | "videoReady" | "videoEnd" | "videoError"
     /**
      * `stop` only: true when the user dismissed the surface (Android close button,
      * iOS system PiP controls) instead of the app calling `stopFloatingCaptionAsync`.
      */
     userInitiated?: boolean
-    /** `error` only. */
+    /** `error` and `videoError` only. */
     message?: string
     status: FloatingCaptionStatus
 }
@@ -122,6 +160,7 @@ export type PipCaptionsNativeModule = {
     startAsync(options: Record<string, unknown>): Promise<FloatingCaptionStatus>
     updateAsync(snapshot: Record<string, unknown>): Promise<FloatingCaptionStatus>
     pauseAsync(paused: boolean): Promise<FloatingCaptionStatus>
+    seekVideoAsync(positionMs: number): Promise<FloatingCaptionStatus>
     stopAsync(): Promise<FloatingCaptionStatus>
     addListener(
         eventName: "onStateChange",

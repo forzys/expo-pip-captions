@@ -1,8 +1,8 @@
 # expo-pip-captions
 
-Floating live captions for Expo and React Native apps.
+Floating captions and video for Expo and React Native apps.
 
-`expo-pip-captions` renders a small always-on-top caption window that stays visible after the user leaves your app: the system Picture in Picture window on iOS, a draggable overlay window on Android. It is built for live transcription and translation apps that already own the audio / speech pipeline and only need a native surface for rolling captions.
+`expo-pip-captions` renders a small always-on-top window that stays visible after the user leaves your app: the system Picture in Picture window on iOS, a draggable overlay window on Android. It shows rolling captions, a video, or a video with your own captions on top. It is built for live transcription and translation apps that already own the audio / speech pipeline and only need a native surface for the result.
 
 [简体中文](./README.zh-CN.md)
 
@@ -98,6 +98,28 @@ subscription.remove()
 await stopFloatingCaptionAsync()
 ```
 
+### Video
+
+Pass `video` to play a video in the same window. Captions keep working and are optional: leave `items` empty for a plain floating player.
+
+```ts
+await startFloatingCaptionAsync({
+  items: [],
+  video: { uri: "https://example.com/talk.m3u8", resizeMode: "contain" },
+})
+
+// Control playback
+await updateFloatingCaptionAsync({ video: { paused: true } })
+await seekFloatingVideoAsync(30_000)
+
+// Swap or remove the video without closing the window
+await updateFloatingCaptionAsync({ video: { uri: "file:///path/to/clip.mp4" } })
+await updateFloatingCaptionAsync({ video: null })
+
+// Read the playback position
+const { video } = await getFloatingCaptionStatusAsync() // { playing, positionMs, durationMs }
+```
+
 The same functions are available on the default export: `PipCaptions.startAsync(...)`, `PipCaptions.updateAsync(...)`, `PipCaptions.addListener(...)` and so on.
 
 ## API
@@ -110,9 +132,10 @@ All functions resolve with a `FloatingCaptionStatus` and never reject for expect
 | `requestFloatingCaptionPermissionAsync()` | Android: opens the overlay permission screen when the permission is missing. The result reflects the state *before* the user returns, so re-check when the app comes back to the foreground. iOS: no permission is needed, resolves with the current status. |
 | `startFloatingCaptionAsync(options)` | Shows the surface. On iOS Picture in Picture starts asynchronously, so the result usually still says `active: false`; wait for the `start` event. |
 | `updateFloatingCaptionAsync(snapshot)` | Merges `snapshot` into the current one and re-renders. Options given to `start` stay in effect unless overridden. |
-| `pauseFloatingCaptionAsync(paused)` | Freezes / resumes the native duration ticker. |
+| `pauseFloatingCaptionAsync(paused)` | Freezes / resumes the native duration ticker. It does not pause the video; use `update({ video: { paused } })`. |
+| `seekFloatingVideoAsync(positionMs)` | Seeks the video. |
 | `stopFloatingCaptionAsync()` | Removes the surface. |
-| `addFloatingCaptionListener(listener)` | Subscribes to `start`, `stop` and `error` events. Returns `{ remove() }`. |
+| `addFloatingCaptionListener(listener)` | Subscribes to `start`, `stop`, `error`, `videoReady`, `videoEnd` and `videoError` events. Returns `{ remove() }`. |
 
 ### Snapshot
 
@@ -151,6 +174,7 @@ Pass these to `start`, or to `update` to change them on the fly.
 | `showIcon` | `boolean` | `true` | Header icon. |
 | `iconName` | `string` | app icon | iOS: image name in the app bundle / asset catalog. Android: drawable or mipmap resource name. |
 | `showDuration` | `boolean` | `true` | Header duration label. |
+| `video` | `FloatingCaptionVideo \| null` | none | See below. |
 | `appearance.backgroundColor` | color string | `#121212` | Any React Native color string. |
 | `appearance.textColor` | color string | `#FFFFFF` | Caption color. |
 | `appearance.durationColor` | color string | white, 62% | Duration label (and Android close icon). |
@@ -161,13 +185,32 @@ Pass these to `start`, or to `update` to change them on the fly.
 | `position` | `{ x, y }` in dp | `{ x: 16, y: 120 }` | Android only. Initial top-left position. |
 | `iosAudioSession` | `"playAndRecord" \| "playback" \| "none"` | `"playAndRecord"` | iOS only. See below. |
 
+### Video options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `video.uri` | `string` | required | Remote URL (mp4, HLS, ...), `file://` URL or absolute file path. Changing it loads the new video. |
+| `video.headers` | `Record<string, string>` | none | HTTP headers for remote requests. |
+| `video.paused` | `boolean` | `false` | Playback starts as soon as the video is ready. |
+| `video.muted` | `boolean` | `false` | |
+| `video.volume` | `number` | `1` | 0 to 1. |
+| `video.loop` | `boolean` | `false` | |
+| `video.positionMs` | `number` | `0` | Start position, applied once per `uri`. |
+| `video.resizeMode` | `"contain" \| "cover"` | `"contain"` | |
+
+How the window is laid out with a video:
+
+- **iOS**: the video fills the PiP window, which takes the video's aspect ratio. Captions are drawn over the bottom edge on a dark scrim, at most 3 lines (2 for `mini`). The header (icon, duration) is hidden.
+- **Android**: the video sits between the header and the captions, at the video's aspect ratio. The caption area uses the compact height.
+- Without caption text, the caption area is hidden; the placeholder only shows if you pass `placeholder` explicitly.
+
 ### Events
 
 ```ts
 type FloatingCaptionEvent = {
-  type: "start" | "stop" | "error"
+  type: "start" | "stop" | "error" | "videoReady" | "videoEnd" | "videoError"
   userInitiated?: boolean  // stop: closed by the user rather than by stopFloatingCaptionAsync()
-  message?: string         // error
+  message?: string         // error, videoError
   status: FloatingCaptionStatus
 }
 ```
@@ -179,11 +222,13 @@ type FloatingCaptionEvent = {
 - The final size of the PiP window is decided by iOS. `variant` only provides a preferred size and aspect hint.
 - PiP content is not interactive. Taps are handled by the system (they show the PiP controls or restore the app), so there is no custom close button; users close the window with the system controls, which emits `stop` with `userInitiated: true`.
 - PiP can only start while the app is in the foreground and has an active, non-ambient audio session. If the session category is still `ambient` / `soloAmbient` when you call `start`, the module switches it to `playAndRecord` (or `playback`, per `iosAudioSession`) with `mixWithOthers`. If your app already configures the session (for example through a recording library), it is left untouched apart from being activated. Use `iosAudioSession: "none"` to opt out completely.
+- Video plays inside a video-call style PiP window, which is what allows custom captions on top of it. The trade-off is that the system play / pause / skip buttons are not available; control playback from your app.
 - Starting can take a moment right after launch or after returning to the foreground; the module retries for about 1.6 seconds, then emits `error`.
 
 ### Android
 
 - "Display over other apps" must be granted by the user in system settings. There is no in-app dialog for it.
+- Video is played with the platform `MediaPlayer`, so format support is whatever the device supports (mp4 / H.264 and HLS work broadly; DRM and DASH do not). Remote playback needs the `INTERNET` permission, which React Native apps have by default.
 - The close button removes only the overlay and emits `stop` with `userInitiated: true`. Whether transcription should also stop is up to your app.
 - When JS is suspended in the background, a native pipeline can keep the overlay updated directly:
 
@@ -202,7 +247,7 @@ type FloatingCaptionEvent = {
 
 ## What this package does not do
 
-Speech recognition, translation, audio capture and networking are out of scope. The module only renders the snapshots you give it. Captions are never stored or sent anywhere by this package.
+Speech recognition, translation, audio capture and subtitle file parsing (SRT / VTT) are out of scope. The module only renders the snapshots you give it; to subtitle a video, push the cue for the current position with `updateFloatingCaptionAsync`. Captions are never stored or sent anywhere by this package.
 
 ## Requirements
 

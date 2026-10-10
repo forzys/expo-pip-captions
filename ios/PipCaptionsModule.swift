@@ -45,6 +45,10 @@ public class PipCaptionsModule: Module {
       return self.controller.pause(paused: paused)
     }.runOnQueue(.main)
 
+    AsyncFunction("seekVideoAsync") { (positionMs: Double) -> [String: Any] in
+      return self.controller.seekVideo(positionMs: positionMs)
+    }.runOnQueue(.main)
+
     AsyncFunction("stopAsync") { () -> [String: Any] in
       return self.controller.stop()
     }.runOnQueue(.main)

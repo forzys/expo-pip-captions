@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Video playback in the floating window through the `video` option, with captions over it (iOS) or below it (Android).
+- `seekFloatingVideoAsync`, `videoReady` / `videoEnd` / `videoError` events and `status.video` (playing, position, duration).
+
+### Changed
+
+- `updateFloatingCaptionAsync` merges `video` and `appearance` one level deep.
+- With a video, the placeholder is only shown when `placeholder` is passed explicitly.
+
 ## 0.2.0
 
 First public release. Compared with the in-app 0.1.0 module:

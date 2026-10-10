@@ -1,7 +1,7 @@
 {
   "name": "expo-pip-captions",
-  "version": "0.2.0",
-  "description": "Floating live captions for Expo and React Native: system Picture in Picture on iOS, a draggable overlay window on Android.",
+  "version": "0.3.0",
+  "description": "Floating captions and video for Expo and React Native: system Picture in Picture on iOS, a draggable overlay window on Android.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "sideEffects": false,
@@ -32,6 +32,7 @@
     "picture-in-picture",
     "pip",
     "captions",
+    "video",
     "subtitles",
     "overlay",
     "floating-window",

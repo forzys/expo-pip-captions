@@ -3,9 +3,9 @@ import AVKit
 import UIKit
 
 private struct PipCaptionsLayoutMetrics {
-  let sourceWidth: CGFloat
-  let sourceHeight: CGFloat
-  let preferredSize: CGSize
+  var sourceWidth: CGFloat
+  var sourceHeight: CGFloat
+  var preferredSize: CGSize
   let horizontalInset: CGFloat
   let topInset: CGFloat
   let bottomInset: CGFloat
@@ -16,7 +16,11 @@ private struct PipCaptionsLayoutMetrics {
   let captionScrollMaxLines: Int
   var cornerRadius: CGFloat
 
-  static func resolve(snapshot: [String: Any], containerWidth: CGFloat) -> PipCaptionsLayoutMetrics {
+  static func resolve(
+    snapshot: [String: Any],
+    containerWidth: CGFloat,
+    videoAspect: CGFloat? = nil
+  ) -> PipCaptionsLayoutMetrics {
     let safeContainerWidth = max(containerWidth, 260)
     var metrics: PipCaptionsLayoutMetrics
 
@@ -62,6 +66,17 @@ private struct PipCaptionsLayoutMetrics {
     if let cornerRadius = appearance.double("cornerRadius"), cornerRadius >= 0 {
       metrics.cornerRadius = CGFloat(cornerRadius)
     }
+
+    // With a video the window follows the video's aspect ratio instead of the preset.
+    if let videoAspect {
+      let aspect = min(max(videoAspect, 0.5), 2.4)
+      metrics.preferredSize = CGSize(
+        width: metrics.preferredSize.width,
+        height: metrics.preferredSize.width / aspect
+      )
+      metrics.sourceHeight = min(metrics.sourceWidth / aspect, 400)
+      metrics.sourceWidth = metrics.sourceHeight * aspect
+    }
     return metrics
   }
 }
@@ -89,6 +104,12 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   private var durationTimer: Timer?
   private var sessionLive = false
 
+  private var player: AVPlayer?
+  private var loadedVideoURI: String?
+  private var videoAspect: CGFloat?
+  private var videoObservations: [NSKeyValueObservation] = []
+  private var videoEndObserver: NSObjectProtocol?
+
   func getStatus(reason: String? = nil) -> [String: Any] {
     let supported = AVPictureInPictureController.isPictureInPictureSupported()
     let isActive = active || pictureInPictureController?.isPictureInPictureActive == true
@@ -98,6 +119,17 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
       "permissionGranted": true,
       "platform": "ios"
     ]
+
+    if let player {
+      var video: [String: Any] = [
+        "playing": player.rate != 0,
+        "positionMs": max(0, player.currentTime().seconds.finiteOrZero * 1000)
+      ]
+      if let duration = player.currentItem?.duration.seconds, duration.isFinite {
+        video["durationMs"] = duration * 1000
+      }
+      result["video"] = video
+    }
 
     if let reason = reason ?? lastReason {
       result["reason"] = reason
@@ -132,8 +164,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   }
 
   func update(snapshot incoming: [String: Any]) -> [String: Any] {
-    snapshot.merge(Self.sanitized(incoming)) { _, new in new }
+    merge(incoming)
     syncDuration(reset: false)
+    applyVideo()
     applySourceLayout()
     render()
     return getStatus()
@@ -154,8 +187,29 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     return getStatus()
   }
 
+  func seekVideo(positionMs: Double) -> [String: Any] {
+    if let player, positionMs.isFinite {
+      player.seek(to: CMTime(seconds: max(0, positionMs) / 1000, preferredTimescale: 600))
+    }
+    return getStatus()
+  }
+
   private static func sanitized(_ dictionary: [String: Any]) -> [String: Any] {
     dictionary.filter { !($0.value is NSNull) }
+  }
+
+  // Nested dictionaries (`video`, `appearance`) are merged one level deep, so a partial
+  // update such as `video: { paused: true }` keeps the other keys.
+  private func merge(_ incoming: [String: Any]) {
+    for (key, value) in incoming {
+      if value is NSNull {
+        snapshot.removeValue(forKey: key)
+      } else if let new = value as? [String: Any], let old = snapshot[key] as? [String: Any] {
+        snapshot[key] = old.merging(Self.sanitized(new)) { _, new in new }
+      } else {
+        snapshot[key] = value
+      }
+    }
   }
 
   private func emit(_ type: String, _ extra: [String: Any] = [:]) {
@@ -171,6 +225,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     sessionLive = false
     durationRunning = false
     stopDurationTimer()
+    releaseVideo()
     lastReason = message
     emit("error", ["message": message])
   }
@@ -189,6 +244,8 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
 
     let captionViewController = self.captionViewController ?? PipCaptionsViewController()
     self.captionViewController = captionViewController
+    applyVideo()
+    applySourceLayout()
     render()
 
     if pictureInPictureController == nil {
@@ -330,7 +387,11 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
 
     rootView.layoutIfNeeded()
     let containerWidth = rootView.bounds.width > 0 ? rootView.bounds.width : UIScreen.main.bounds.width
-    let metrics = PipCaptionsLayoutMetrics.resolve(snapshot: snapshot, containerWidth: containerWidth)
+    let metrics = PipCaptionsLayoutMetrics.resolve(
+      snapshot: snapshot,
+      containerWidth: containerWidth,
+      videoAspect: videoAspect
+    )
     sourceWidthConstraint?.constant = metrics.sourceWidth
     sourceHeightConstraint?.constant = metrics.sourceHeight
     rootView.layoutIfNeeded()
@@ -340,6 +401,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     stopDurationTimer()
     sessionLive = false
     durationRunning = false
+    releaseVideo()
     sourceView?.removeFromSuperview()
     sourceView = nil
     pictureInPictureController = nil
@@ -347,7 +409,133 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   }
 
   private func render() {
-    captionViewController?.render(snapshot: snapshot, durationText: durationText())
+    captionViewController?.render(
+      snapshot: snapshot,
+      durationText: durationText(),
+      player: player,
+      videoAspect: videoAspect
+    )
+  }
+
+  // MARK: - Video
+
+  private func applyVideo() {
+    let video = snapshot.dictionary("video")
+    guard sessionLive, let uri = video.string("uri"), let url = Self.videoURL(from: uri) else {
+      releaseVideo()
+      return
+    }
+
+    if uri != loadedVideoURI {
+      releaseVideo()
+      loadVideo(uri: uri, url: url, options: video)
+    }
+
+    guard let player else {
+      return
+    }
+    player.isMuted = video.bool("muted", default: false)
+    player.volume = Float(min(max(video.double("volume") ?? 1, 0), 1))
+    if video.bool("paused", default: false) {
+      player.pause()
+    } else {
+      player.play()
+    }
+  }
+
+  private func loadVideo(uri: String, url: URL, options: [String: Any]) {
+    var assetOptions: [String: Any] = [:]
+    if let headers = options["headers"] as? [String: String], !headers.isEmpty {
+      assetOptions["AVURLAssetHTTPHeaderFieldsKey"] = headers
+    }
+
+    let item = AVPlayerItem(asset: AVURLAsset(url: url, options: assetOptions))
+    let player = AVPlayer(playerItem: item)
+    player.actionAtItemEnd = .pause
+    if let startMs = options.double("positionMs"), startMs > 0 {
+      player.seek(to: CMTime(seconds: startMs / 1000, preferredTimescale: 600))
+    }
+
+    videoObservations = [
+      item.observe(\.status, options: [.new]) { [weak self] item, _ in
+        DispatchQueue.main.async {
+          self?.videoStatusChanged(item)
+        }
+      },
+      item.observe(\.presentationSize, options: [.new]) { [weak self] item, _ in
+        DispatchQueue.main.async {
+          self?.videoSizeChanged(item)
+        }
+      }
+    ]
+    videoEndObserver = NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemDidPlayToEndTime,
+      object: item,
+      queue: .main
+    ) { [weak self] _ in
+      self?.videoDidEnd()
+    }
+
+    self.player = player
+    loadedVideoURI = uri
+    // Assumed until the real size is known.
+    videoAspect = 16.0 / 9.0
+  }
+
+  private func releaseVideo() {
+    videoObservations.forEach { $0.invalidate() }
+    videoObservations = []
+    if let videoEndObserver {
+      NotificationCenter.default.removeObserver(videoEndObserver)
+    }
+    videoEndObserver = nil
+    player?.pause()
+    player = nil
+    loadedVideoURI = nil
+    videoAspect = nil
+  }
+
+  private func videoStatusChanged(_ item: AVPlayerItem) {
+    guard item === player?.currentItem else {
+      return
+    }
+    switch item.status {
+    case .readyToPlay:
+      emit("videoReady")
+    case .failed:
+      emit("videoError", ["message": item.error?.localizedDescription ?? "Unable to play the video"])
+    default:
+      break
+    }
+  }
+
+  private func videoSizeChanged(_ item: AVPlayerItem) {
+    let size = item.presentationSize
+    guard item === player?.currentItem, size.width > 0, size.height > 0 else {
+      return
+    }
+    videoAspect = size.width / size.height
+    applySourceLayout()
+    render()
+  }
+
+  private func videoDidEnd() {
+    guard let player else {
+      return
+    }
+    if snapshot.dictionary("video").bool("loop", default: false) {
+      player.seek(to: .zero)
+      player.play()
+    } else {
+      emit("videoEnd")
+    }
+  }
+
+  private static func videoURL(from uri: String) -> URL? {
+    if uri.hasPrefix("/") {
+      return URL(fileURLWithPath: uri)
+    }
+    return URL(string: uri)
   }
 
   // MARK: - Duration
@@ -465,8 +653,13 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
   private var stackTrailingConstraint: NSLayoutConstraint?
   private var stackTopConstraint: NSLayoutConstraint?
   private var stackBottomConstraint: NSLayoutConstraint?
+  private var stackBottomPinnedConstraint: NSLayoutConstraint?
   private var transcriptHeightConstraint: NSLayoutConstraint?
   private var loadedIconName: String??
+  private let playerLayer = AVPlayerLayer()
+  private let captionScrim = UIView()
+  private var videoMode = false
+  private var videoCaptionMaxHeight: CGFloat = 0
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -477,6 +670,15 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     stackView.alignment = .fill
     stackView.spacing = 10
     stackView.translatesAutoresizingMaskIntoConstraints = false
+
+    playerLayer.isHidden = true
+    view.layer.insertSublayer(playerLayer, at: 0)
+
+    // Keeps captions readable on top of bright video frames.
+    captionScrim.translatesAutoresizingMaskIntoConstraints = false
+    captionScrim.backgroundColor = UIColor(white: 0, alpha: 0.5)
+    captionScrim.isHidden = true
+    view.addSubview(captionScrim)
     view.addSubview(stackView)
 
     headerRow.axis = .horizontal
@@ -532,6 +734,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     self.stackTopConstraint = stackTopConstraint
     self.stackBottomConstraint = stackBottomConstraint
     self.transcriptHeightConstraint = transcriptHeightConstraint
+    stackBottomPinnedConstraint = stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -metrics.bottomInset)
 
     NSLayoutConstraint.activate([
       iconWidthConstraint,
@@ -541,6 +744,10 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
       stackTopConstraint,
       stackBottomConstraint,
       transcriptHeightConstraint,
+      captionScrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      captionScrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      captionScrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      captionScrim.topAnchor.constraint(equalTo: stackView.topAnchor, constant: -8),
       transcriptLabel.leadingAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.leadingAnchor),
       transcriptLabel.trailingAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.trailingAnchor),
       transcriptLabel.topAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.topAnchor),
@@ -551,20 +758,42 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    playerLayer.frame = view.bounds
+    CATransaction.commit()
     updateCaptionMaxLayoutWidth()
+    if videoMode {
+      updateVideoCaptionHeight()
+    }
   }
 
-  func render(snapshot: [String: Any], durationText: String) {
+  func render(snapshot: [String: Any], durationText: String, player: AVPlayer?, videoAspect: CGFloat?) {
     loadViewIfNeeded()
+    videoMode = player != nil
+    if playerLayer.player !== player {
+      playerLayer.player = player
+    }
+    playerLayer.isHidden = !videoMode
+    playerLayer.videoGravity = snapshot.dictionary("video").string("resizeMode") == "cover"
+      ? .resizeAspectFill
+      : .resizeAspect
+
     applyHeader(snapshot: snapshot)
-    applyLayout(snapshot: snapshot)
+    applyLayout(snapshot: snapshot, videoAspect: videoAspect)
 
     durationLabel.text = durationText
 
     let lines = Self.captionLines(from: snapshot)
-    transcriptLabel.text = lines.isEmpty
-      ? (snapshot.string("placeholder") ?? "Listening...")
-      : lines.joined(separator: "\n")
+    // Over a video the placeholder only shows when the app asked for one.
+    let placeholder = snapshot.string("placeholder") ?? (videoMode ? nil : "Listening...")
+    let text = lines.isEmpty ? placeholder : lines.joined(separator: "\n")
+    transcriptLabel.text = text
+    transcriptScrollView.isHidden = text == nil
+    captionScrim.isHidden = !videoMode || text == nil
+    if videoMode {
+      updateVideoCaptionHeight()
+    }
     scrollTranscriptToBottom()
   }
 
@@ -581,16 +810,23 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
 
     iconView.isHidden = !snapshot.bool("showIcon", default: true) || iconView.image == nil
     durationLabel.isHidden = !snapshot.bool("showDuration", default: true)
-    headerRow.isHidden = iconView.isHidden && durationLabel.isHidden
+    // The header is not drawn over a video; captions sit at the bottom edge instead.
+    headerRow.isHidden = videoMode || (iconView.isHidden && durationLabel.isHidden)
   }
 
-  private func applyLayout(snapshot: [String: Any]) {
+  private func applyLayout(snapshot: [String: Any], videoAspect: CGFloat?) {
     let containerWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
-    let metrics = PipCaptionsLayoutMetrics.resolve(snapshot: snapshot, containerWidth: containerWidth)
+    let metrics = PipCaptionsLayoutMetrics.resolve(
+      snapshot: snapshot,
+      containerWidth: containerWidth,
+      videoAspect: videoAspect
+    )
     let appearance = snapshot.dictionary("appearance")
 
     preferredContentSize = metrics.preferredSize
-    view.backgroundColor = appearance.color("backgroundColor") ?? Self.defaultBackgroundColor
+    view.backgroundColor = videoMode
+      ? .black
+      : (appearance.color("backgroundColor") ?? Self.defaultBackgroundColor)
     view.layer.cornerRadius = metrics.cornerRadius
     headerRow.spacing = metrics.headerSpacing
     iconView.layer.cornerRadius = metrics.iconSize * 0.22
@@ -600,10 +836,20 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     stackTrailingConstraint?.constant = -metrics.horizontalInset
     stackTopConstraint?.constant = metrics.topInset
     stackBottomConstraint?.constant = -metrics.bottomInset
-    transcriptHeightConstraint?.constant = Self.transcriptViewportHeight(
-      for: metrics,
-      headerHidden: headerRow.isHidden
-    )
+    stackBottomPinnedConstraint?.constant = -metrics.bottomInset
+    if videoMode {
+      NSLayoutConstraint.deactivate([stackTopConstraint, stackBottomConstraint].compactMap { $0 })
+      stackBottomPinnedConstraint?.isActive = true
+      let visibleLines: CGFloat = snapshot.string("variant") == "mini" ? 2 : 3
+      videoCaptionMaxHeight = ceil(metrics.captionFontSize * 1.25 * visibleLines)
+    } else {
+      stackBottomPinnedConstraint?.isActive = false
+      NSLayoutConstraint.activate([stackTopConstraint, stackBottomConstraint].compactMap { $0 })
+      transcriptHeightConstraint?.constant = Self.transcriptViewportHeight(
+        for: metrics,
+        headerHidden: headerRow.isHidden
+      )
+    }
     durationLabel.font = .systemFont(ofSize: max(12, metrics.statusFontSize - 1), weight: .medium)
     durationLabel.textColor = appearance.color("durationColor") ?? Self.defaultDurationColor
     transcriptLabel.font = .systemFont(ofSize: metrics.captionFontSize, weight: .regular)
@@ -618,6 +864,24 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     let width = view.bounds.width - leading - trailing
     if width > 0 {
       transcriptLabel.preferredMaxLayoutWidth = width
+    }
+  }
+
+  // Over a video the caption area hugs its text, up to a few lines, so it covers as
+  // little of the picture as possible.
+  private func updateVideoCaptionHeight() {
+    let inset = stackLeadingConstraint?.constant ?? 0
+    let viewWidth = view.bounds.width > 0 ? view.bounds.width : preferredContentSize.width
+    let availableWidth = viewWidth - inset * 2
+    guard availableWidth > 0 else {
+      return
+    }
+    let textHeight = transcriptLabel.sizeThatFits(
+      CGSize(width: availableWidth, height: .greatestFiniteMagnitude)
+    ).height
+    let height = min(ceil(textHeight), videoCaptionMaxHeight)
+    if transcriptHeightConstraint?.constant != height {
+      transcriptHeightConstraint?.constant = height
     }
   }
 
@@ -734,6 +998,12 @@ private extension Dictionary where Key == String, Value == Any {
       blue: CGFloat(argb & 0xFF) / 255,
       alpha: CGFloat((argb >> 24) & 0xFF) / 255
     )
+  }
+}
+
+private extension Double {
+  var finiteOrZero: Double {
+    isFinite ? self : 0
   }
 }
 
