@@ -216,6 +216,12 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     var body = extra
     body["type"] = type
     body["status"] = getStatus()
+    switch UIApplication.shared.applicationState {
+    case .active: body["appState"] = "active"
+    case .inactive: body["appState"] = "inactive"
+    case .background: body["appState"] = "background"
+    @unknown default: break
+    }
     onEvent?(body)
   }
 
@@ -656,7 +662,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
   private var stackBottomPinnedConstraint: NSLayoutConstraint?
   private var transcriptHeightConstraint: NSLayoutConstraint?
   private var loadedIconName: String??
-  private let playerLayer = AVPlayerLayer()
+  private var playerLayer: AVPlayerLayer?
   private let captionScrim = UIView()
   private var videoMode = false
   private var videoCaptionMaxHeight: CGFloat = 0
@@ -670,9 +676,6 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     stackView.alignment = .fill
     stackView.spacing = 10
     stackView.translatesAutoresizingMaskIntoConstraints = false
-
-    playerLayer.isHidden = true
-    view.layer.insertSublayer(playerLayer, at: 0)
 
     // Keeps captions readable on top of bright video frames.
     captionScrim.translatesAutoresizingMaskIntoConstraints = false
@@ -760,7 +763,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     super.viewDidLayoutSubviews()
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    playerLayer.frame = view.bounds
+    playerLayer?.frame = view.bounds
     CATransaction.commit()
     updateCaptionMaxLayoutWidth()
     if videoMode {
@@ -771,13 +774,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
   func render(snapshot: [String: Any], durationText: String, player: AVPlayer?, videoAspect: CGFloat?) {
     loadViewIfNeeded()
     videoMode = player != nil
-    if playerLayer.player !== player {
-      playerLayer.player = player
-    }
-    playerLayer.isHidden = !videoMode
-    playerLayer.videoGravity = snapshot.dictionary("video").string("resizeMode") == "cover"
-      ? .resizeAspectFill
-      : .resizeAspect
+    applyPlayer(player, cover: snapshot.dictionary("video").string("resizeMode") == "cover")
 
     applyHeader(snapshot: snapshot)
     applyLayout(snapshot: snapshot, videoAspect: videoAspect)
@@ -795,6 +792,27 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
       updateVideoCaptionHeight()
     }
     scrollTranscriptToBottom()
+  }
+
+  // The player layer only exists while there is a video, so a captions-only window
+  // carries no video machinery at all.
+  private func applyPlayer(_ player: AVPlayer?, cover: Bool) {
+    guard let player else {
+      playerLayer?.removeFromSuperlayer()
+      playerLayer = nil
+      return
+    }
+
+    let layer = playerLayer ?? AVPlayerLayer()
+    if playerLayer == nil {
+      layer.frame = view.bounds
+      view.layer.insertSublayer(layer, at: 0)
+      playerLayer = layer
+    }
+    if layer.player !== player {
+      layer.player = player
+    }
+    layer.videoGravity = cover ? .resizeAspectFill : .resizeAspect
   }
 
   func setDurationText(_ text: String) {

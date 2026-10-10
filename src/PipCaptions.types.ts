@@ -145,6 +145,8 @@ export type FloatingCaptionEvent = {
      * iOS system PiP controls) instead of the app calling `stopFloatingCaptionAsync`.
      */
     userInitiated?: boolean
+    /** iOS only. App state when the event happened, to tell a background stop from a foreground one. */
+    appState?: "active" | "inactive" | "background"
     /** `error` and `videoError` only. */
     message?: string
     status: FloatingCaptionStatus
