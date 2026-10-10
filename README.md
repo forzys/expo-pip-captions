@@ -1,5 +1,9 @@
 # expo-pip-captions
 
+[![npm version](https://img.shields.io/npm/v/expo-pip-captions.svg)](https://www.npmjs.com/package/expo-pip-captions)
+[![npm downloads](https://img.shields.io/npm/dm/expo-pip-captions.svg)](https://www.npmjs.com/package/expo-pip-captions)
+[![license](https://img.shields.io/npm/l/expo-pip-captions.svg)](./LICENSE)
+
 Floating captions and video for Expo and React Native apps.
 
 `expo-pip-captions` renders a small always-on-top window that stays visible after the user leaves your app: the system Picture in Picture window on iOS, a draggable overlay window on Android. It shows rolling captions, a video, or a video with your own captions on top. It is built for live transcription and translation apps that already own the audio / speech pipeline and only need a native surface for the result.

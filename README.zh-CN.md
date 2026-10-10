@@ -1,5 +1,9 @@
 # expo-pip-captions
 
+[![npm version](https://img.shields.io/npm/v/expo-pip-captions.svg)](https://www.npmjs.com/package/expo-pip-captions)
+[![npm downloads](https://img.shields.io/npm/dm/expo-pip-captions.svg)](https://www.npmjs.com/package/expo-pip-captions)
+[![license](https://img.shields.io/npm/l/expo-pip-captions.svg)](./LICENSE)
+
 适用于 Expo / React Native 的悬浮字幕与视频小窗。
 
 `expo-pip-captions` 提供一个离开应用后仍然可见的置顶小窗：iOS 使用系统画中画（Picture in Picture），Android 使用可拖动的悬浮窗。小窗可以显示滚动字幕、视频，或在视频上叠加你自己的字幕。它面向已经自己掌握录音 / 语音识别 / 翻译链路、只需要一个原生界面来展示结果的应用。
