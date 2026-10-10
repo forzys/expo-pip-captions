@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- iOS: the video keeps playing when the app goes to the background, and playback is resumed if the system paused it while loading or while Picture in Picture was starting.
+
 ## 0.6.0
 
 - iOS: `video.systemControls` switches to the regular video Picture in Picture with the system transport controls (no subtitles or danmaku in that mode).

@@ -508,6 +508,18 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     }
   }
 
+  // The system can pause the player behind our back while the item is still loading or
+  // while Picture in Picture is starting. Called at those two points only, so a pause the
+  // user makes later with the system controls is left alone.
+  private func resumeVideoIfExpected() {
+    guard let player, sessionLive, player.rate == 0 else {
+      return
+    }
+    if !snapshot.dictionary("video").bool("paused", default: false) {
+      player.play()
+    }
+  }
+
   private func removeSystemPlayerLayer() {
     systemPlayerLayer?.player = nil
     systemPlayerLayer?.removeFromSuperlayer()
@@ -523,6 +535,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     let item = AVPlayerItem(asset: AVURLAsset(url: url, options: assetOptions))
     let player = AVPlayer(playerItem: item)
     player.actionAtItemEnd = .pause
+    // Without this iOS pauses any player with a video track when the app leaves the
+    // foreground, which is exactly when the floating window is meant to keep playing.
+    player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
     if let startMs = options.double("positionMs"), startMs > 0 {
       player.seek(to: CMTime(seconds: startMs / 1000, preferredTimescale: 600))
     }
@@ -574,6 +589,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     }
     switch item.status {
     case .readyToPlay:
+      resumeVideoIfExpected()
       emit("videoReady")
       if usesSystemControls, sessionLive, !active, let controller = pictureInPictureController {
         startPictureInPictureWhenPossible(controller, retriesRemaining: 8, generation: startGeneration)
@@ -688,6 +704,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     active = true
     starting = false
     lastReason = nil
+    resumeVideoIfExpected()
     emit("start")
   }
 
