@@ -190,6 +190,14 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     return getStatus()
   }
 
+  func sendDanmaku(items: [[String: Any]]) -> [String: Any] {
+    guard player != nil, let captionViewController else {
+      return getStatus(reason: "Danmaku needs a video in the floating window")
+    }
+    captionViewController.sendDanmaku(items, snapshot: snapshot)
+    return getStatus()
+  }
+
   func seekVideo(positionMs: Double) -> [String: Any] {
     if let player, positionMs.isFinite {
       player.seek(to: CMTime(seconds: max(0, positionMs) / 1000, preferredTimescale: 600))
@@ -691,6 +699,10 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
   private let captionScrim = UIView()
   private var videoMode = false
   private var videoCaptionMaxHeight: CGFloat = 0
+  private var scrimBottomConstraints: [NSLayoutConstraint] = []
+  private var scrimTopConstraints: [NSLayoutConstraint] = []
+  private let danmakuContainer = UIView()
+  private var danmakuLaneFreeAt: [CFTimeInterval] = []
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -706,6 +718,11 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     captionScrim.translatesAutoresizingMaskIntoConstraints = false
     captionScrim.backgroundColor = UIColor(white: 0, alpha: 0.5)
     captionScrim.isHidden = true
+
+    danmakuContainer.translatesAutoresizingMaskIntoConstraints = false
+    danmakuContainer.isUserInteractionEnabled = false
+    danmakuContainer.clipsToBounds = true
+    view.addSubview(danmakuContainer)
     view.addSubview(captionScrim)
     view.addSubview(stackView)
 
@@ -763,6 +780,15 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     self.stackBottomConstraint = stackBottomConstraint
     self.transcriptHeightConstraint = transcriptHeightConstraint
     stackBottomPinnedConstraint = stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -metrics.bottomInset)
+    scrimBottomConstraints = [
+      captionScrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      captionScrim.topAnchor.constraint(equalTo: stackView.topAnchor, constant: -8)
+    ]
+    scrimTopConstraints = [
+      captionScrim.topAnchor.constraint(equalTo: view.topAnchor),
+      captionScrim.bottomAnchor.constraint(equalTo: stackView.bottomAnchor, constant: 8)
+    ]
+    NSLayoutConstraint.activate(scrimBottomConstraints)
 
     NSLayoutConstraint.activate([
       iconWidthConstraint,
@@ -774,8 +800,10 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
       transcriptHeightConstraint,
       captionScrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       captionScrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      captionScrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-      captionScrim.topAnchor.constraint(equalTo: stackView.topAnchor, constant: -8),
+      danmakuContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      danmakuContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      danmakuContainer.topAnchor.constraint(equalTo: view.topAnchor),
+      danmakuContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
       transcriptLabel.leadingAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.leadingAnchor),
       transcriptLabel.trailingAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.trailingAnchor),
       transcriptLabel.topAnchor.constraint(equalTo: transcriptScrollView.contentLayoutGuide.topAnchor),
@@ -825,6 +853,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     guard let player else {
       playerLayer?.removeFromSuperlayer()
       playerLayer = nil
+      danmakuContainer.subviews.forEach { $0.removeFromSuperview() }
       return
     }
 
@@ -838,6 +867,81 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
       layer.player = player
     }
     layer.videoGravity = cover ? .resizeAspectFill : .resizeAspect
+  }
+
+  // Danmaku: each comment crosses the picture once, right to left, in the first lane
+  // whose previous comment has fully entered the screen.
+  func sendDanmaku(_ items: [[String: Any]], snapshot: [String: Any]) {
+    loadViewIfNeeded()
+    let width = view.bounds.width
+    let height = view.bounds.height
+    guard width > 0, height > 0 else {
+      return
+    }
+
+    let options = snapshot.dictionary("danmaku")
+    let defaultFontSize: Double = snapshot.string("variant") == "mini" ? 12 : 14
+    let fontSize = CGFloat(max(8, options.double("fontSize") ?? defaultFontSize))
+    let lineHeight = ceil(fontSize * 1.45)
+    let laneCount = max(1, min(options.int("maxLines") ?? 3, Int((height - 12) / lineHeight)))
+    let speed = (width + 80) / CGFloat(max(1, (options.double("durationMs") ?? 6000) / 1000))
+    let opacity = CGFloat(min(max(options.double("opacity") ?? 1, 0), 1))
+    // Defaults to the edge the subtitles are not using.
+    let position = options.string("position")
+      ?? (snapshot.string("captionPosition") == "top" ? "bottom" : "top")
+
+    if danmakuLaneFreeAt.count != laneCount {
+      danmakuLaneFreeAt = Array(repeating: 0, count: laneCount)
+    }
+
+    for item in items {
+      guard let text = item.string("text") else {
+        continue
+      }
+      let now = CACurrentMediaTime()
+      let lanes = danmakuLaneFreeAt.indices
+      guard let lane = lanes.first(where: { danmakuLaneFreeAt[$0] <= now })
+        ?? lanes.min(by: { danmakuLaneFreeAt[$0] < danmakuLaneFreeAt[$1] })
+      else {
+        continue
+      }
+      let delay = max(0, danmakuLaneFreeAt[lane] - now)
+      // Too far behind: dropping is better than showing comments seconds late.
+      guard delay < 4 else {
+        continue
+      }
+
+      let label = UILabel()
+      label.text = text
+      label.font = .systemFont(ofSize: fontSize, weight: .semibold)
+      label.textColor = item.color("color") ?? .white
+      label.alpha = opacity
+      label.layer.shadowColor = UIColor.black.cgColor
+      label.layer.shadowOpacity = 0.9
+      label.layer.shadowRadius = 1.5
+      label.layer.shadowOffset = CGSize(width: 0, height: 1)
+      label.sizeToFit()
+
+      let labelWidth = label.bounds.width
+      let y = position == "bottom"
+        ? height - 6 - CGFloat(lane + 1) * lineHeight
+        : 6 + CGFloat(lane) * lineHeight
+      label.frame = CGRect(x: width, y: y, width: labelWidth, height: lineHeight)
+      danmakuContainer.addSubview(label)
+      danmakuLaneFreeAt[lane] = now + delay + Double((labelWidth + 24) / speed)
+
+      UIView.animate(
+        withDuration: Double((width + labelWidth) / speed),
+        delay: delay,
+        options: [.curveLinear],
+        animations: {
+          label.frame.origin.x = -labelWidth
+        },
+        completion: { _ in
+          label.removeFromSuperview()
+        }
+      )
+    }
   }
 
   func setDurationText(_ text: String) {
@@ -880,9 +984,17 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     stackTopConstraint?.constant = metrics.topInset
     stackBottomConstraint?.constant = -metrics.bottomInset
     stackBottomPinnedConstraint?.constant = -metrics.bottomInset
+    let captionsOnTop = videoMode && snapshot.string("captionPosition") == "top"
+    NSLayoutConstraint.deactivate(captionsOnTop ? scrimBottomConstraints : scrimTopConstraints)
+    NSLayoutConstraint.activate(captionsOnTop ? scrimTopConstraints : scrimBottomConstraints)
     if videoMode {
-      NSLayoutConstraint.deactivate([stackTopConstraint, stackBottomConstraint].compactMap { $0 })
-      stackBottomPinnedConstraint?.isActive = true
+      if captionsOnTop {
+        stackBottomPinnedConstraint?.isActive = false
+        NSLayoutConstraint.activate([stackTopConstraint, stackBottomConstraint].compactMap { $0 })
+      } else {
+        NSLayoutConstraint.deactivate([stackTopConstraint, stackBottomConstraint].compactMap { $0 })
+        stackBottomPinnedConstraint?.isActive = true
+      }
       let visibleLines: CGFloat = snapshot.string("variant") == "mini" ? 2 : 3
       videoCaptionMaxHeight = ceil(metrics.captionFontSize * 1.25 * visibleLines)
     } else {

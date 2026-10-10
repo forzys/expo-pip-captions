@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- `captionPosition` (`top` / `bottom`) for subtitles shown with a video.
+- Danmaku: `sendFloatingDanmakuAsync` and the `danmaku` options, separate from subtitles.
+
 ## 0.4.0
 
 - `press` event when the user taps the window.

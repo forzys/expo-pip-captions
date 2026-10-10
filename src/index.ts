@@ -3,6 +3,7 @@ import PipCaptionsModule from "./PipCaptionsModule"
 import type {
     FloatingCaptionAppearance,
     FloatingCaptionEvent,
+    FloatingDanmakuItem,
     FloatingCaptionStartOptions,
     FloatingCaptionSubscription,
     FloatingCaptionUpdate,
@@ -70,6 +71,21 @@ export const pauseFloatingCaptionAsync = (paused: boolean) => PipCaptionsModule.
 /** Seeks the video playing in the floating window. No-op when there is none. */
 export const seekFloatingVideoAsync = (positionMs: number) => PipCaptionsModule.seekVideoAsync(positionMs)
 
+/**
+ * Sends user comments (danmaku) across the video. Each one is shown once; they are separate
+ * from the subtitles in `items`. Needs a video in the floating window.
+ */
+export const sendFloatingDanmakuAsync = (
+    danmaku: string | FloatingDanmakuItem | (string | FloatingDanmakuItem)[],
+) => {
+    const items = (Array.isArray(danmaku) ? danmaku : [danmaku]).map((entry) => {
+        const { text, color } = typeof entry === "string" ? { text: entry, color: undefined } : entry
+        const nativeColor = color == null ? null : processColor(color)
+        return typeof nativeColor === "number" ? { text, color: nativeColor } : { text }
+    })
+    return PipCaptionsModule.sendDanmakuAsync(items)
+}
+
 export const stopFloatingCaptionAsync = () => PipCaptionsModule.stopAsync()
 
 export const addFloatingCaptionListener = (
@@ -83,6 +99,7 @@ const PipCaptions = {
     updateAsync: updateFloatingCaptionAsync,
     pauseAsync: pauseFloatingCaptionAsync,
     seekVideoAsync: seekFloatingVideoAsync,
+    sendDanmakuAsync: sendFloatingDanmakuAsync,
     stopAsync: stopFloatingCaptionAsync,
     addListener: addFloatingCaptionListener,
 }

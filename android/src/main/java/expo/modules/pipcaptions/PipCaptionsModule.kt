@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.SurfaceTexture
+import android.graphics.Typeface
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -20,6 +21,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
@@ -28,6 +30,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -74,6 +77,9 @@ class PipCaptionsModule : Module() {
   private var videoWidth = 0
   private var videoHeight = 0
   private var pendingVideoSeekMs: Long? = null
+  private var danmakuLayer: FrameLayout? = null
+  private var danmakuLaneFreeAt = LongArray(0)
+  private var captionsOnTop = false
 
   init {
     activeModule = WeakReference(this)
@@ -174,6 +180,10 @@ class PipCaptionsModule : Module() {
       return@AsyncFunction status()
     }.runOnQueue(Queues.MAIN)
 
+    AsyncFunction("sendDanmakuAsync") { items: List<Map<String, Any?>> ->
+      return@AsyncFunction status(sendDanmaku(items))
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("stopAsync") {
       close(userInitiated = false)
       return@AsyncFunction status()
@@ -272,6 +282,7 @@ class PipCaptionsModule : Module() {
     ensureOverlay()
     applyStyle()
     applyVideo()
+    applyCaptionPosition()
     applyOverlayLayout()
     renderDuration()
 
@@ -400,6 +411,15 @@ class PipCaptionsModule : Module() {
       )
     }
 
+    val danmaku = FrameLayout(context)
+    video.addView(
+      danmaku,
+      FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+      )
+    )
+
     root.addView(header)
     root.addView(
       video,
@@ -454,6 +474,8 @@ class PipCaptionsModule : Module() {
     transcriptScrollView = scroll
     videoContainer = video
     videoTextureView = texture
+    danmakuLayer = danmaku
+    captionsOnTop = false
     windowParams = params
     loadedIconName = null
     icon.setImageDrawable(loadIcon(null))
@@ -524,12 +546,107 @@ class PipCaptionsModule : Module() {
     return snapshot.nested("video").string("uri") != null
   }
 
+  // With a video the subtitles sit right above or below the picture.
+  private fun applyCaptionPosition() {
+    val root = overlayView ?: return
+    val scroll = transcriptScrollView ?: return
+    val video = videoContainer ?: return
+    val onTop = hasVideo() && snapshot.string("captionPosition") == "top"
+    if (onTop == captionsOnTop) {
+      return
+    }
+    captionsOnTop = onTop
+    root.removeView(scroll)
+    root.addView(scroll, if (onTop) root.indexOfChild(video) else root.childCount)
+  }
+
+  // Danmaku: each comment crosses the picture once, right to left, in the first lane
+  // whose previous comment has fully entered the screen. Returns why nothing was shown.
+  private fun sendDanmaku(items: List<Map<String, Any?>>): String? {
+    val layer = danmakuLayer
+    if (!active || layer == null || !hasVideo()) {
+      return "Danmaku needs a video in the floating window"
+    }
+    val width = layer.width
+    val height = layer.height
+    if (width <= 0 || height <= 0) {
+      return null
+    }
+
+    val options = snapshot.nested("danmaku")
+    val fontSize = (options.number("fontSize")?.toFloat() ?: if (snapshot["variant"] == "mini") 12f else 14f)
+      .coerceAtLeast(8f)
+    val lineHeight = (
+      TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, fontSize, context.resources.displayMetrics) * 1.45f
+      ).toInt().coerceAtLeast(1)
+    val laneCount = (options.number("maxLines")?.toInt() ?: 3)
+      .coerceAtMost((height - dp(12)) / lineHeight)
+      .coerceAtLeast(1)
+    val durationMs = (options.number("durationMs")?.toLong() ?: 6000L).coerceAtLeast(1000L)
+    val speed = (width + dp(80)).toFloat() / durationMs
+    val opacity = (options.number("opacity")?.toFloat() ?: 1f).coerceIn(0f, 1f)
+    // Defaults to the side the subtitles are not on.
+    val position = options.string("position")
+      ?: if (snapshot.string("captionPosition") == "top") "bottom" else "top"
+
+    if (danmakuLaneFreeAt.size != laneCount) {
+      danmakuLaneFreeAt = LongArray(laneCount)
+    }
+
+    for (item in items) {
+      val text = item.string("text") ?: continue
+      val now = SystemClock.uptimeMillis()
+      val lanes = danmakuLaneFreeAt.indices
+      val lane = lanes.firstOrNull { danmakuLaneFreeAt[it] <= now }
+        ?: lanes.minByOrNull { danmakuLaneFreeAt[it] }
+        ?: continue
+      val delay = (danmakuLaneFreeAt[lane] - now).coerceAtLeast(0L)
+      // Too far behind: dropping is better than showing comments seconds late.
+      if (delay > 4000L) {
+        continue
+      }
+
+      val view = TextView(context).apply {
+        this.text = text
+        textSize = fontSize
+        maxLines = 1
+        alpha = opacity
+        setTypeface(typeface, Typeface.BOLD)
+        setTextColor(item.color("color") ?: Color.WHITE)
+        setShadowLayer(dp(2).toFloat(), 0f, dp(1).toFloat(), Color.BLACK)
+      }
+      val textWidth = view.paint.measureText(text)
+      val top = if (position == "bottom") {
+        height - dp(6) - (lane + 1) * lineHeight
+      } else {
+        dp(6) + lane * lineHeight
+      }
+      layer.addView(
+        view,
+        FrameLayout.LayoutParams(textWidth.toInt() + dp(4), lineHeight).apply {
+          topMargin = top
+        }
+      )
+      view.translationX = width.toFloat()
+      danmakuLaneFreeAt[lane] = now + delay + ((textWidth + dp(24)) / speed).toLong()
+      view.animate()
+        .translationX(-textWidth - dp(4))
+        .setStartDelay(delay)
+        .setDuration(((width + textWidth) / speed).toLong())
+        .setInterpolator(LinearInterpolator())
+        .withEndAction { layer.removeView(view) }
+        .start()
+    }
+    return null
+  }
+
   private fun applyVideo() {
     val container = videoContainer ?: return
     val video = snapshot.nested("video")
     val uri = video.string("uri")
     if (uri == null) {
       releaseVideo()
+      danmakuLayer?.removeAllViews()
       container.visibility = View.GONE
       return
     }
@@ -795,6 +912,7 @@ class PipCaptionsModule : Module() {
     videoSurface = null
     videoContainer = null
     videoTextureView = null
+    danmakuLayer = null
     overlayView = null
     overlayBackground = null
     headerRow = null

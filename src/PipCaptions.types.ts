@@ -49,6 +49,26 @@ export type FloatingCaptionVideo = {
     resizeMode?: "contain" | "cover"
 }
 
+/** A user comment that flies across the video once, right to left. */
+export type FloatingDanmakuItem = {
+    text: string
+    /** Any React Native color string. Defaults to white. */
+    color?: string
+}
+
+export type FloatingDanmakuOptions = {
+    /** Which edge of the picture the lanes start from. Defaults to the edge the subtitles are not on. */
+    position?: "top" | "bottom"
+    /** Defaults to 14 (`regular`) or 12 (`mini`). */
+    fontSize?: number
+    /** Time one comment takes to cross the picture. Defaults to 6000. */
+    durationMs?: number
+    /** Maximum number of lanes. Defaults to 3. */
+    maxLines?: number
+    /** 0 to 1. Defaults to 1. */
+    opacity?: number
+}
+
 export type FloatingCaptionOptions = {
     /** Size preset. Defaults to `regular`. */
     variant?: FloatingCaptionVariant
@@ -70,6 +90,13 @@ export type FloatingCaptionOptions = {
      * below it (Android). Pass `null` in an update to remove the video again.
      */
     video?: FloatingCaptionVideo | null
+    /**
+     * Where the subtitles (`items`) go when a video is playing: over the top or bottom edge
+     * of the picture on iOS, above or below it on Android. Defaults to `bottom`.
+     */
+    captionPosition?: "top" | "bottom"
+    /** Appearance of comments sent with `sendFloatingDanmakuAsync`. */
+    danmaku?: FloatingDanmakuOptions
     /** Show the duration label in the header. Defaults to true. */
     showDuration?: boolean
     appearance?: FloatingCaptionAppearance
@@ -183,6 +210,7 @@ export type PipCaptionsNativeModule = {
     updateAsync(snapshot: Record<string, unknown>): Promise<FloatingCaptionStatus>
     pauseAsync(paused: boolean): Promise<FloatingCaptionStatus>
     seekVideoAsync(positionMs: number): Promise<FloatingCaptionStatus>
+    sendDanmakuAsync(items: Record<string, unknown>[]): Promise<FloatingCaptionStatus>
     stopAsync(): Promise<FloatingCaptionStatus>
     addListener(
         eventName: "onStateChange",

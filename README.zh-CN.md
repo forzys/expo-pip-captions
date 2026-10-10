@@ -173,6 +173,38 @@ const { video } = await getFloatingCaptionStatusAsync() // { playing, positionMs
 | `position` | `{ x, y }`（dp） | `{ x: 16, y: 120 }` | 仅 Android，初始左上角位置。 |
 | `iosAudioSession` | `"playAndRecord" \| "playback" \| "none"` | `"playAndRecord"` | 仅 iOS，见下。 |
 
+### 视频字幕与用户弹幕
+
+带视频时，文字分为相互独立的两类：
+
+- **视频字幕**：即快照里的 `items`，与无视频时的字幕是同一份数据，显示后保持不动直到下次更新。用 `captionPosition` 设为 `top`（上方）或 `bottom`（下方，默认）。
+- **用户弹幕**：从右向左飞过画面一次的用户评论。它不属于快照，发生时发送即可。
+
+```ts
+await updateFloatingCaptionAsync({
+  captionPosition: "bottom",
+  danmaku: { position: "top", maxLines: 3, durationMs: 6000 },
+  items: [{ key: "cue-12", text: "当前进度对应的字幕" }],
+})
+
+await sendFloatingDanmakuAsync("哈哈哈")
+await sendFloatingDanmakuAsync([
+  { text: "前排", color: "#FFD54F" },
+  { text: "来自聊天室的弹幕" },
+])
+```
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `captionPosition` | `"top" \| "bottom"` | `"bottom"` | 视频字幕的位置。 |
+| `danmaku.position` | `"top" \| "bottom"` | 与 `captionPosition` 相反 | 弹幕轨道从画面的哪一侧开始排。 |
+| `danmaku.maxLines` | `number` | `3` | 轨道数。 |
+| `danmaku.durationMs` | `number` | `6000` | 一条弹幕飞过画面的时间。 |
+| `danmaku.fontSize` | `number` | `14` / `12`（mini） | |
+| `danmaku.opacity` | `number` | `1` | 0 到 1。 |
+
+弹幕会分配到不同轨道避免重叠；所有轨道都积压超过 4 秒时，新弹幕会被丢弃而不是延迟显示。弹幕需要小窗里有视频，否则调用不生效，返回的状态里带 `reason`。Android 上字幕位于画面上方或下方，iOS 上字幕叠在画面上；弹幕在两端都叠在画面上。
+
 ### 点击行为
 
 点击小窗在两端都会触发 `press` 事件，具体做什么由应用决定（跳转页面、暂停等）。

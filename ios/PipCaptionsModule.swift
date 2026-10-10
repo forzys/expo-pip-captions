@@ -49,6 +49,10 @@ public class PipCaptionsModule: Module {
       return self.controller.seekVideo(positionMs: positionMs)
     }.runOnQueue(.main)
 
+    AsyncFunction("sendDanmakuAsync") { (items: [[String: Any]]) -> [String: Any] in
+      return self.controller.sendDanmaku(items: items)
+    }.runOnQueue(.main)
+
     AsyncFunction("stopAsync") { () -> [String: Any] in
       return self.controller.stop()
     }.runOnQueue(.main)

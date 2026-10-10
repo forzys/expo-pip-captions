@@ -22,6 +22,7 @@ const createFallbackModule = (): PipCaptionsNativeModule => ({
     updateAsync: async () => getFallbackStatus(),
     pauseAsync: async () => getFallbackStatus(),
     seekVideoAsync: async () => getFallbackStatus(),
+    sendDanmakuAsync: async () => getFallbackStatus(),
     stopAsync: async () => getFallbackStatus(),
     addListener: () => ({ remove: () => {} }),
 })

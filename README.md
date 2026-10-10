@@ -134,6 +134,7 @@ All functions resolve with a `FloatingCaptionStatus` and never reject for expect
 | `updateFloatingCaptionAsync(snapshot)` | Merges `snapshot` into the current one and re-renders. Options given to `start` stay in effect unless overridden. |
 | `pauseFloatingCaptionAsync(paused)` | Freezes / resumes the native duration ticker. It does not pause the video; use `update({ video: { paused } })`. |
 | `seekFloatingVideoAsync(positionMs)` | Seeks the video. |
+| `sendFloatingDanmakuAsync(danmaku)` | Sends user comments across the video. See [Subtitles and danmaku](#subtitles-and-danmaku). |
 | `stopFloatingCaptionAsync()` | Removes the surface. |
 | `addFloatingCaptionListener(listener)` | Subscribes to `start`, `stop`, `error`, `videoReady`, `videoEnd` and `videoError` events. Returns `{ remove() }`. |
 
@@ -175,6 +176,8 @@ Pass these to `start`, or to `update` to change them on the fly.
 | `iconName` | `string` | app icon | iOS: image name in the app bundle / asset catalog. Android: drawable or mipmap resource name. |
 | `showDuration` | `boolean` | `true` | Header duration label. |
 | `video` | `FloatingCaptionVideo \| null` | none | See below. |
+| `captionPosition` | `"top" \| "bottom"` | `"bottom"` | Where subtitles go when a video is playing. |
+| `danmaku` | `FloatingDanmakuOptions` | | Appearance of danmaku. See below. |
 | `appearance.backgroundColor` | color string | `#121212` | Any React Native color string. |
 | `appearance.textColor` | color string | `#FFFFFF` | Caption color. |
 | `appearance.durationColor` | color string | white, 62% | Duration label (and Android close icon). |
@@ -205,6 +208,37 @@ How the window is laid out with a video:
 - **iOS**: the video fills the PiP window, which takes the video's aspect ratio. Captions are drawn over the bottom edge on a dark scrim, at most 3 lines (2 for `mini`). The header (icon, duration) is hidden.
 - **Android**: the video sits between the header and the captions, at the video's aspect ratio. The caption area uses the compact height.
 - Without caption text, the caption area is hidden; the placeholder only shows if you pass `placeholder` explicitly.
+
+### Subtitles and danmaku
+
+With a video, text comes in two independent kinds:
+
+- **Subtitles** are the `items` of the snapshot, the same data as captions without a video. They stay in place until the next update. `captionPosition` puts them at the `top` or `bottom` (default).
+- **Danmaku** are user comments that fly across the picture once, right to left. They are not part of the snapshot: send them when they happen.
+
+```ts
+await updateFloatingCaptionAsync({
+  captionPosition: "bottom",
+  danmaku: { position: "top", maxLines: 3, durationMs: 6000 },
+  items: [{ key: "cue-12", text: "Subtitle for the current position" }],
+})
+
+await sendFloatingDanmakuAsync("Nice!")
+await sendFloatingDanmakuAsync([
+  { text: "First", color: "#FFD54F" },
+  { text: "Hello from the chat" },
+])
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `danmaku.position` | `"top" \| "bottom"` | opposite of `captionPosition` | Edge of the picture the lanes start from. |
+| `danmaku.maxLines` | `number` | `3` | Number of lanes. |
+| `danmaku.durationMs` | `number` | `6000` | Time one comment takes to cross the picture. |
+| `danmaku.fontSize` | `number` | `14` / `12` (mini) | |
+| `danmaku.opacity` | `number` | `1` | 0 to 1. |
+
+Comments are spread over the lanes so they do not overlap; when every lane is more than 4 seconds behind, new comments are dropped instead of being shown late. Danmaku needs a video in the window: without one the call does nothing and the returned status carries a `reason`. On Android subtitles sit above or below the picture, on iOS they are drawn over it; danmaku is drawn over the picture on both.
 
 ### Taps
 
