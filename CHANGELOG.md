@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- iOS: `video.systemControls` switches to the regular video Picture in Picture with the system transport controls (no subtitles or danmaku in that mode).
+- iOS: `video.paused` is applied only when its value changes.
+
 ## 0.5.0
 
 - `captionPosition` (`top` / `bottom`) for subtitles shown with a video.

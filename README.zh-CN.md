@@ -173,6 +173,28 @@ const { video } = await getFloatingCaptionStatusAsync() // { playing, positionMs
 | `position` | `{ x, y }`（dp） | `{ x: 16, y: 120 }` | 仅 Android，初始左上角位置。 |
 | `iosAudioSession` | `"playAndRecord" \| "playback" \| "none"` | `"playAndRecord"` | 仅 iOS，见下。 |
 
+### 系统控件（iOS）
+
+默认情况下视频放在“视频通话”型画中画里，这样才能叠加字幕和弹幕，但没有播放按钮。设置 `video.systemControls: true` 可改用普通视频画中画：
+
+```ts
+await startFloatingCaptionAsync({
+  items: [],
+  video: { uri, systemControls: true },
+})
+```
+
+| | 默认 | `systemControls: true` |
+| --- | --- | --- |
+| 小窗内的播放 / 暂停 / 快进按钮 | 无 | 有 |
+| 视频字幕（`items`）和弹幕 | 有 | 不显示 |
+| 点击小窗 | 回到应用 | 显示控件，点恢复按钮才回到应用 |
+
+- 模式在启动小窗时确定，切换需要先停止再启动。
+- 小窗在视频可播放后才出现，网络视频在 `start` 之后会有短暂延迟，以 `start` 事件为准。
+- 用户可以在小窗里暂停。真实播放状态看 `getFloatingCaptionStatusAsync()` 的 `video.playing`；更新里的 `video.paused` 只在值变化时生效，不会覆盖用户的操作。
+- Android 忽略此选项：悬浮窗没有系统控件。
+
 ### 视频字幕与用户弹幕
 
 带视频时，文字分为相互独立的两类：

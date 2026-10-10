@@ -111,6 +111,11 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   private var videoAspect: CGFloat?
   private var videoObservations: [NSKeyValueObservation] = []
   private var videoEndObserver: NSObjectProtocol?
+  private var appliedVideoPaused: Bool?
+  // `video.systemControls`: a regular player PiP with the system transport controls,
+  // instead of the video-call PiP that carries our own caption view.
+  private var usesSystemControls = false
+  private var systemPlayerLayer: AVPlayerLayer?
 
   func getStatus(reason: String? = nil) -> [String: Any] {
     let supported = AVPictureInPictureController.isPictureInPictureSupported()
@@ -191,6 +196,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   }
 
   func sendDanmaku(items: [[String: Any]]) -> [String: Any] {
+    guard !usesSystemControls else {
+      return getStatus(reason: "Danmaku is not available with video.systemControls")
+    }
     guard player != nil, let captionViewController else {
       return getStatus(reason: "Danmaku needs a video in the floating window")
     }
@@ -265,20 +273,50 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     applySourceLayout()
     render()
 
+    // The kind of PiP is fixed when the controller is created, so a controller of the
+    // other kind left over from an earlier start is replaced.
+    let wantsSystemControls = player != nil
+      && snapshot.dictionary("video").bool("systemControls", default: false)
+    if let existing = pictureInPictureController,
+      wantsSystemControls != usesSystemControls,
+      !existing.isPictureInPictureActive {
+      pictureInPictureController = nil
+      removeSystemPlayerLayer()
+    }
+
     if pictureInPictureController == nil {
-      let source = AVPictureInPictureController.ContentSource(
-        activeVideoCallSourceView: sourceView,
-        contentViewController: captionViewController
-      )
+      let source: AVPictureInPictureController.ContentSource
+      if wantsSystemControls, let player {
+        let layer = AVPlayerLayer(player: player)
+        layer.frame = sourceView.bounds
+        sourceView.layer.addSublayer(layer)
+        systemPlayerLayer = layer
+        source = AVPictureInPictureController.ContentSource(playerLayer: layer)
+      } else {
+        source = AVPictureInPictureController.ContentSource(
+          activeVideoCallSourceView: sourceView,
+          contentViewController: captionViewController
+        )
+      }
       let controller = AVPictureInPictureController(contentSource: source)
       controller.delegate = self
       controller.canStartPictureInPictureAutomaticallyFromInline = true
-      controller.requiresLinearPlayback = true
+      controller.requiresLinearPlayback = !wantsSystemControls
       pictureInPictureController = controller
+      usesSystemControls = wantsSystemControls
+      render()
     }
 
     guard let controller = pictureInPictureController else {
       fail("Unable to create Picture in Picture controller")
+      return
+    }
+
+    // A player PiP only becomes possible once the item can play, which for a remote
+    // video takes longer than the retry window; videoStatusChanged starts it then.
+    if usesSystemControls, player?.currentItem?.status != .readyToPlay {
+      starting = true
+      lastReason = nil
       return
     }
 
@@ -412,6 +450,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     sourceWidthConstraint?.constant = metrics.sourceWidth
     sourceHeightConstraint?.constant = metrics.sourceHeight
     rootView.layoutIfNeeded()
+    systemPlayerLayer?.frame = sourceView.bounds
   }
 
   private func cleanupInlineSource() {
@@ -419,6 +458,8 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     sessionLive = false
     durationRunning = false
     releaseVideo()
+    removeSystemPlayerLayer()
+    usesSystemControls = false
     sourceView?.removeFromSuperview()
     sourceView = nil
     pictureInPictureController = nil
@@ -429,7 +470,8 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     captionViewController?.render(
       snapshot: snapshot,
       durationText: durationText(),
-      player: player,
+      // With system controls the player is shown by the system's own PiP layer.
+      player: usesSystemControls ? nil : player,
       videoAspect: videoAspect
     )
   }
@@ -453,11 +495,23 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     }
     player.isMuted = video.bool("muted", default: false)
     player.volume = Float(min(max(video.double("volume") ?? 1, 0), 1))
-    if video.bool("paused", default: false) {
-      player.pause()
-    } else {
-      player.play()
+    // Applied only when the requested value changes, so a pause made with the system
+    // controls is not undone by the next caption update.
+    let paused = video.bool("paused", default: false)
+    if paused != appliedVideoPaused {
+      appliedVideoPaused = paused
+      if paused {
+        player.pause()
+      } else {
+        player.play()
+      }
     }
+  }
+
+  private func removeSystemPlayerLayer() {
+    systemPlayerLayer?.player = nil
+    systemPlayerLayer?.removeFromSuperlayer()
+    systemPlayerLayer = nil
   }
 
   private func loadVideo(uri: String, url: URL, options: [String: Any]) {
@@ -495,6 +549,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
 
     self.player = player
     loadedVideoURI = uri
+    appliedVideoPaused = nil
     // Assumed until the real size is known.
     videoAspect = 16.0 / 9.0
   }
@@ -509,6 +564,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     player?.pause()
     player = nil
     loadedVideoURI = nil
+    appliedVideoPaused = nil
     videoAspect = nil
   }
 
@@ -519,8 +575,17 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     switch item.status {
     case .readyToPlay:
       emit("videoReady")
+      if usesSystemControls, sessionLive, !active, let controller = pictureInPictureController {
+        startPictureInPictureWhenPossible(controller, retriesRemaining: 8, generation: startGeneration)
+      }
     case .failed:
-      emit("videoError", ["message": item.error?.localizedDescription ?? "Unable to play the video"])
+      let message = item.error?.localizedDescription ?? "Unable to play the video"
+      if usesSystemControls, !active {
+        // The window was waiting for this video, so it is not going to appear.
+        starting = false
+        lastReason = message
+      }
+      emit("videoError", ["message": message])
     default:
       break
     }

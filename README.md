@@ -202,12 +202,35 @@ Pass these to `start`, or to `update` to change them on the fly.
 | `video.loop` | `boolean` | `false` | |
 | `video.positionMs` | `number` | `0` | Start position, applied once per `uri`. |
 | `video.resizeMode` | `"contain" \| "cover"` | `"contain"` | |
+| `video.systemControls` | `boolean` | `false` | iOS only. See [System controls](#system-controls-ios). |
 
 How the window is laid out with a video:
 
 - **iOS**: the video fills the PiP window, which takes the video's aspect ratio. Captions are drawn over the bottom edge on a dark scrim, at most 3 lines (2 for `mini`). The header (icon, duration) is hidden.
 - **Android**: the video sits between the header and the captions, at the video's aspect ratio. The caption area uses the compact height.
 - Without caption text, the caption area is hidden; the placeholder only shows if you pass `placeholder` explicitly.
+
+### System controls (iOS)
+
+By default the video plays in a video-call style PiP window, which is what allows subtitles and danmaku on top of it but has no playback buttons. Set `video.systemControls: true` to use the regular video PiP instead:
+
+```ts
+await startFloatingCaptionAsync({
+  items: [],
+  video: { uri, systemControls: true },
+})
+```
+
+| | Default | `systemControls: true` |
+| --- | --- | --- |
+| Play / pause / skip buttons in the window | no | yes |
+| Subtitles (`items`) and danmaku | yes | not shown |
+| Tap on the window | returns to the app | shows the controls; the restore button returns to the app |
+
+- The mode is chosen when the window is started. To switch, stop and start again.
+- The window appears once the video is ready to play, so with a remote video there is a short delay after `start`; the `start` event tells you when.
+- The user can pause from the window. `getFloatingCaptionStatusAsync()` reports the real state in `video.playing`; `video.paused` in an update is applied only when you change its value, so it does not undo the user's choice.
+- Android ignores this option: an overlay window has no system controls.
 
 ### Subtitles and danmaku
 

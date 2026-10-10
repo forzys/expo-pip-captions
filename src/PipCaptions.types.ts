@@ -47,6 +47,12 @@ export type FloatingCaptionVideo = {
     positionMs?: number
     /** How the picture fits the window. Defaults to `contain`. */
     resizeMode?: "contain" | "cover"
+    /**
+     * iOS only, read by `startFloatingCaptionAsync`. Uses the regular video Picture in Picture
+     * with the system play / pause / skip controls. In exchange nothing can be drawn over
+     * the picture: subtitles (`items`) and danmaku are not shown. Defaults to false.
+     */
+    systemControls?: boolean
 }
 
 /** A user comment that flies across the video once, right to left. */
