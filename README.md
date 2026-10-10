@@ -6,6 +6,14 @@ Floating captions and video for Expo and React Native apps.
 
 [简体中文](./README.zh-CN.md)
 
+## Demo
+
+Recorded on iOS, with the app in the background.
+
+| Live captions | Video, subtitles at the bottom | Video, subtitles at the top | Danmaku | System controls |
+| --- | --- | --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/live-captions.gif" width="170" alt="Live captions"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/captions-bottom.gif" width="170" alt="Video, subtitles at the bottom"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/captions-top.gif" width="170" alt="Video, subtitles at the top"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/danmaku.gif" width="170" alt="Danmaku"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/system-controls.gif" width="170" alt="System controls"> |
+
 ## Platform behavior
 
 | Platform | Implementation | Notes |

@@ -6,6 +6,14 @@
 
 [English](./README.md)
 
+## 演示
+
+以下为 iOS 录屏，应用处于后台。
+
+| 实时字幕 | 视频，字幕在下方 | 视频，字幕在上方 | 弹幕 | 系统控件 |
+| --- | --- | --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/live-captions.gif" width="170" alt="实时字幕"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/captions-bottom.gif" width="170" alt="视频，字幕在下方"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/captions-top.gif" width="170" alt="视频，字幕在上方"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/danmaku.gif" width="170" alt="弹幕"> | <img src="https://raw.githubusercontent.com/forzys/expo-pip-captions/main/docs/system-controls.gif" width="170" alt="系统控件"> |
+
 ## 平台行为
 
 | 平台 | 实现 | 说明 |
