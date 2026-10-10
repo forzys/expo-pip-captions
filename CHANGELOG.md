@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- iOS: the caption window draws the video from frames pulled out of the player instead of a player layer, so the picture no longer goes black when the app is in the background.
+- iOS: the video is restarted when the system pauses it without the app asking.
+
 ## 0.6.1
 
 - iOS: the video keeps playing when the app goes to the background, and playback is resumed if the system paused it while loading or while Picture in Picture was starting.

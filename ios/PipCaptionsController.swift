@@ -112,6 +112,10 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   private var videoObservations: [NSKeyValueObservation] = []
   private var videoEndObserver: NSObjectProtocol?
   private var appliedVideoPaused: Bool?
+  private var videoOutput: AVPlayerItemVideoOutput?
+  private var videoDisplayLink: CADisplayLink?
+  private var videoEnded = false
+  private var lastVideoAutoResumeAt: CFTimeInterval = 0
   // `video.systemControls`: a regular player PiP with the system transport controls,
   // instead of the video-call PiP that carries our own caption view.
   private var usesSystemControls = false
@@ -208,6 +212,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
 
   func seekVideo(positionMs: Double) -> [String: Any] {
     if let player, positionMs.isFinite {
+      videoEnded = false
       player.seek(to: CMTime(seconds: max(0, positionMs) / 1000, preferredTimescale: 600))
     }
     return getStatus()
@@ -304,6 +309,7 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
       controller.requiresLinearPlayback = !wantsSystemControls
       pictureInPictureController = controller
       usesSystemControls = wantsSystemControls
+      updateVideoDisplayLink()
       render()
     }
 
@@ -533,6 +539,12 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     }
 
     let item = AVPlayerItem(asset: AVURLAsset(url: url, options: assetOptions))
+    let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+      kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+    ])
+    item.add(output)
+    videoOutput = output
     let player = AVPlayer(playerItem: item)
     player.actionAtItemEnd = .pause
     // Without this iOS pauses any player with a video track when the app leaves the
@@ -552,6 +564,11 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
         DispatchQueue.main.async {
           self?.videoSizeChanged(item)
         }
+      },
+      player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+        DispatchQueue.main.async {
+          self?.videoTimeControlChanged(player)
+        }
       }
     ]
     videoEndObserver = NotificationCenter.default.addObserver(
@@ -565,6 +582,8 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     self.player = player
     loadedVideoURI = uri
     appliedVideoPaused = nil
+    videoEnded = false
+    updateVideoDisplayLink()
     // Assumed until the real size is known.
     videoAspect = 16.0 / 9.0
   }
@@ -580,6 +599,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     player = nil
     loadedVideoURI = nil
     appliedVideoPaused = nil
+    videoOutput = nil
+    videoEnded = false
+    updateVideoDisplayLink()
     videoAspect = nil
   }
 
@@ -625,8 +647,54 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
       player.seek(to: .zero)
       player.play()
     } else {
+      videoEnded = true
       emit("videoEnd")
     }
+  }
+
+  // In the caption window there are no controls, so nobody but the app can pause. If the
+  // player stops anyway (the system does this around Picture in Picture and background
+  // transitions), start it again, at most once a second.
+  private func videoTimeControlChanged(_ changed: AVPlayer) {
+    guard changed === player, sessionLive, !usesSystemControls, !videoEnded,
+      changed.timeControlStatus == .paused,
+      !snapshot.dictionary("video").bool("paused", default: false)
+    else {
+      return
+    }
+    let now = CACurrentMediaTime()
+    guard now - lastVideoAutoResumeAt > 1 else {
+      return
+    }
+    lastVideoAutoResumeAt = now
+    changed.play()
+  }
+
+  // Pulls decoded frames out of the player and hands them to the caption window.
+  private func updateVideoDisplayLink() {
+    let needed = player != nil && videoOutput != nil && sessionLive && !usesSystemControls
+    if needed, videoDisplayLink == nil {
+      let link = CADisplayLink(target: self, selector: #selector(videoDisplayLinkFired))
+      link.preferredFramesPerSecond = 30
+      link.add(to: .main, forMode: .common)
+      videoDisplayLink = link
+    } else if !needed {
+      videoDisplayLink?.invalidate()
+      videoDisplayLink = nil
+    }
+  }
+
+  @objc private func videoDisplayLinkFired() {
+    guard let output = videoOutput, let captionViewController else {
+      return
+    }
+    let itemTime = output.itemTime(forHostTime: CACurrentMediaTime())
+    guard output.hasNewPixelBuffer(forItemTime: itemTime),
+      let pixelBuffer = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
+    else {
+      return
+    }
+    captionViewController.displayVideoFrame(pixelBuffer)
   }
 
   private static func videoURL(from uri: String) -> URL? {
@@ -777,7 +845,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
   private var stackBottomPinnedConstraint: NSLayoutConstraint?
   private var transcriptHeightConstraint: NSLayoutConstraint?
   private var loadedIconName: String??
-  private var playerLayer: AVPlayerLayer?
+  private var videoLayer: AVSampleBufferDisplayLayer?
   private let captionScrim = UIView()
   private var videoMode = false
   private var videoCaptionMaxHeight: CGFloat = 0
@@ -898,7 +966,7 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
     super.viewDidLayoutSubviews()
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    playerLayer?.frame = view.bounds
+    videoLayer?.frame = view.bounds
     CATransaction.commit()
     updateCaptionMaxLayoutWidth()
     if videoMode {
@@ -931,24 +999,81 @@ private final class PipCaptionsViewController: AVPictureInPictureVideoCallViewCo
 
   // The player layer only exists while there is a video, so a captions-only window
   // carries no video machinery at all.
+  // The picture is drawn from frames the controller pulls out of the player, not by an
+  // AVPlayerLayer: iOS stops rendering player layers as soon as the app is in the
+  // background, which would leave this window black exactly when it is on screen.
   private func applyPlayer(_ player: AVPlayer?, cover: Bool) {
-    guard let player else {
-      playerLayer?.removeFromSuperlayer()
-      playerLayer = nil
+    guard player != nil else {
+      videoLayer?.removeFromSuperlayer()
+      videoLayer = nil
       danmakuContainer.subviews.forEach { $0.removeFromSuperview() }
       return
     }
 
-    let layer = playerLayer ?? AVPlayerLayer()
-    if playerLayer == nil {
+    let layer = videoLayer ?? AVSampleBufferDisplayLayer()
+    if videoLayer == nil {
       layer.frame = view.bounds
       view.layer.insertSublayer(layer, at: 0)
-      playerLayer = layer
-    }
-    if layer.player !== player {
-      layer.player = player
+      videoLayer = layer
     }
     layer.videoGravity = cover ? .resizeAspectFill : .resizeAspect
+  }
+
+  func displayVideoFrame(_ pixelBuffer: CVPixelBuffer) {
+    guard let layer = videoLayer else {
+      return
+    }
+
+    var formatDescription: CMVideoFormatDescription?
+    CMVideoFormatDescriptionCreateForImageBuffer(
+      allocator: kCFAllocatorDefault,
+      imageBuffer: pixelBuffer,
+      formatDescriptionOut: &formatDescription
+    )
+    guard let formatDescription else {
+      return
+    }
+
+    var timing = CMSampleTimingInfo(
+      duration: .invalid,
+      presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
+      decodeTimeStamp: .invalid
+    )
+    var sampleBuffer: CMSampleBuffer?
+    CMSampleBufferCreateReadyWithImageBuffer(
+      allocator: kCFAllocatorDefault,
+      imageBuffer: pixelBuffer,
+      formatDescription: formatDescription,
+      sampleTiming: &timing,
+      sampleBufferOut: &sampleBuffer
+    )
+    guard let sampleBuffer else {
+      return
+    }
+
+    // Frames are already paced by the display link, so show each one right away.
+    if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
+      CFArrayGetCount(attachments) > 0 {
+      let attachment = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+      CFDictionarySetValue(
+        attachment,
+        Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+        Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+      )
+    }
+
+    if #available(iOS 17.0, *) {
+      let renderer = layer.sampleBufferRenderer
+      if renderer.status == .failed {
+        renderer.flush()
+      }
+      renderer.enqueue(sampleBuffer)
+    } else {
+      if layer.status == .failed {
+        layer.flush()
+      }
+      layer.enqueue(sampleBuffer)
+    }
   }
 
   // Danmaku: each comment crosses the picture once, right to left, in the first lane
