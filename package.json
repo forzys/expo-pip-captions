@@ -1,0 +1,64 @@
+{
+  "name": "expo-pip-captions",
+  "version": "0.2.0",
+  "description": "Floating live captions for Expo and React Native: system Picture in Picture on iOS, a draggable overlay window on Android.",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "build",
+    "src",
+    "ios",
+    "android/build.gradle",
+    "android/src",
+    "app.plugin.js",
+    "expo-module.config.json",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "expo-module",
+    "picture-in-picture",
+    "pip",
+    "captions",
+    "subtitles",
+    "overlay",
+    "floating-window",
+    "live-transcription",
+    "ios",
+    "android"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forzys/expo-pip-captions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/forzys/expo-pip-captions/issues"
+  },
+  "homepage": "https://github.com/forzys/expo-pip-captions#readme",
+  "author": "forzys",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": ">=53.0.0",
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "expo": "^55.0.0",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "typescript": "~5.9.2"
+  }
+}
