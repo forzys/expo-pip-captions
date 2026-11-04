@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- iOS: the hidden source view is attached to the topmost presented view controller instead of the root one. A full screen modal covers the root view, and the window must have a visible source view.
+- iOS: when the page holding the hidden source view goes away (a sheet replaced by the next screen, a modal dismissed) while a session is live, the view moves to the page now on top. Before, the window did not appear the next time the app went to the background.
+- The native event is now named `onPipCaptionsStateChange`, so it no longer reaches listeners of other modules that also emit `onStateChange`. `addFloatingCaptionListener` is unchanged.
+
 ## 0.7.0
 
 - iOS: the caption window draws the video from frames pulled out of the player instead of a player layer, so the picture no longer goes black when the app is in the background.

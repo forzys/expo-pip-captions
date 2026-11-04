@@ -219,7 +219,7 @@ export type PipCaptionsNativeModule = {
     sendDanmakuAsync(items: Record<string, unknown>[]): Promise<FloatingCaptionStatus>
     stopAsync(): Promise<FloatingCaptionStatus>
     addListener(
-        eventName: "onStateChange",
+        eventName: "onPipCaptionsStateChange",
         listener: (event: FloatingCaptionEvent) => void,
     ): FloatingCaptionSubscription
 }

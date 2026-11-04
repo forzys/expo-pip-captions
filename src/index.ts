@@ -90,7 +90,7 @@ export const stopFloatingCaptionAsync = () => PipCaptionsModule.stopAsync()
 
 export const addFloatingCaptionListener = (
     listener: (event: FloatingCaptionEvent) => void,
-): FloatingCaptionSubscription => PipCaptionsModule.addListener("onStateChange", listener)
+): FloatingCaptionSubscription => PipCaptionsModule.addListener("onPipCaptionsStateChange", listener)
 
 const PipCaptions = {
     getStatusAsync: getFloatingCaptionStatusAsync,

@@ -86,7 +86,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   var onEvent: (([String: Any]) -> Void)?
 
   private var pictureInPictureController: AVPictureInPictureController?
-  private var sourceView: UIView?
+  private var sourceView: PipSourceView?
+  // True while the source view is being moved on purpose, so its own window change is ignored.
+  private var movingSourceView = false
   private var sourceWidthConstraint: NSLayoutConstraint?
   private var sourceHeightConstraint: NSLayoutConstraint?
   private var captionViewController: PipCaptionsViewController?
@@ -347,6 +349,9 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     if controller.isPictureInPicturePossible {
       starting = true
       lastReason = nil
+      // In the foreground iOS may hold the request and only show the window once the app
+      // goes to the background (`canStartPictureInPictureAutomaticallyFromInline`), so no
+      // callback for a while is normal, not a failure.
       controller.startPictureInPicture()
       return
     }
@@ -408,17 +413,27 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
   }
 
   private func ensureSourceView() -> UIView? {
-    if let sourceView, sourceView.window != nil {
-      applySourceLayout()
-      return sourceView
-    }
-
     guard let rootView = UIApplication.shared.pipCaptionsRootView else {
       return nil
     }
 
-    self.sourceView?.removeFromSuperview()
-    let sourceView = UIView()
+    if let sourceView, sourceView.window != nil, sourceView.superview === rootView {
+      applySourceLayout()
+      return sourceView
+    }
+
+    // The source view has to be on screen, or iOS ignores the start request without calling
+    // back. A full screen modal covers (and can detach) the root view controller's view, so
+    // the view goes on the topmost presented controller. An existing view is moved rather
+    // than replaced, because the PiP controller's content source holds on to it.
+    let sourceView = self.sourceView ?? PipSourceView()
+    sourceView.onWindowChange = { [weak self] window in
+      self?.sourceViewWindowChanged(window)
+    }
+    movingSourceView = true
+    sourceView.removeFromSuperview()
+    defer { movingSourceView = false }
+    NSLayoutConstraint.deactivate([sourceWidthConstraint, sourceHeightConstraint].compactMap { $0 })
     sourceView.translatesAutoresizingMaskIntoConstraints = false
     sourceView.backgroundColor = .clear
     sourceView.isUserInteractionEnabled = false
@@ -439,6 +454,25 @@ final class PipCaptionsController: NSObject, AVPictureInPictureControllerDelegat
     sourceHeightConstraint = heightConstraint
     applySourceLayout()
     return sourceView
+  }
+
+  // The page the source view sits on can go away (a sheet replaced by the next screen, a
+  // modal dismissed). Without a source view in a window iOS cannot start the window when
+  // the app goes to the background, so the view follows to whatever page is on top now.
+  private func sourceViewWindowChanged(_ window: UIWindow?) {
+    guard window == nil, !movingSourceView, sessionLive else { return }
+    reattachSourceView(attemptsRemaining: 5)
+  }
+
+  private func reattachSourceView(attemptsRemaining: Int) {
+    // Next run loop turn: the presentation that removed the page has finished by then.
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.sessionLive, self.sourceView?.window == nil else { return }
+      guard self.ensureSourceView()?.window == nil, attemptsRemaining > 0 else { return }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        self?.reattachSourceView(attemptsRemaining: attemptsRemaining - 1)
+      }
+    }
   }
 
   private func applySourceLayout() {
@@ -1369,20 +1403,36 @@ private extension Double {
   }
 }
 
+/// Reports when it is added to or removed from a window.
+private final class PipSourceView: UIView {
+  var onWindowChange: ((UIWindow?) -> Void)?
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    onWindowChange?(window)
+  }
+}
+
 private extension UIApplication {
   var pipCaptionsRootView: UIView? {
     let scenes = connectedScenes.compactMap { $0 as? UIWindowScene }
     let foregroundScenes = scenes.filter { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive }
 
     for scene in foregroundScenes + scenes {
-      if let keyWindow = scene.windows.first(where: { $0.isKeyWindow }) {
-        return keyWindow.rootViewController?.view ?? keyWindow
-      }
-      if let window = scene.windows.first(where: { !$0.isHidden }) {
-        return window.rootViewController?.view ?? window
+      if let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first(where: { !$0.isHidden }) {
+        return Self.topmostView(in: window)
       }
     }
 
     return nil
+  }
+
+  // The view of the topmost presented view controller that is not on its way out.
+  static func topmostView(in window: UIWindow) -> UIView {
+    var controller = window.rootViewController
+    while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+      controller = presented
+    }
+    return controller?.view ?? window
   }
 }

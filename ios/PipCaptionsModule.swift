@@ -1,7 +1,7 @@
 import ExpoModulesCore
 import Foundation
 
-private let stateChangeEvent = "onStateChange"
+private let stateChangeEvent = "onPipCaptionsStateChange"
 
 public class PipCaptionsModule: Module {
   private let controller = PipCaptionsController()

@@ -313,6 +313,7 @@ type FloatingCaptionEvent = {
 - PiP can only start while the app is in the foreground and has an active, non-ambient audio session. If the session category is still `ambient` / `soloAmbient` when you call `start`, the module switches it to `playAndRecord` (or `playback`, per `iosAudioSession`) with `mixWithOthers`. If your app already configures the session (for example through a recording library), it is left untouched apart from being activated. Use `iosAudioSession: "none"` to opt out completely.
 - Video plays inside a video-call style PiP window, which is what allows custom captions on top of it. The trade-off is that the system play / pause / skip buttons are not available; control playback from your app.
 - Starting can take a moment right after launch or after returning to the foreground; the module retries for about 1.6 seconds, then emits `error`.
+- While the app is in the foreground, iOS may keep the window hidden and show it only when the app goes to the background. The status then reads `active: false` with `reason: "Picture in Picture is starting"`, and `start` is emitted when the window actually appears.
 
 ### Android
 

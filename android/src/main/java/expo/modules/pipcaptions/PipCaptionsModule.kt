@@ -96,7 +96,7 @@ class PipCaptionsModule : Module() {
   }
 
   companion object {
-    private const val STATE_CHANGE_EVENT = "onStateChange"
+    private const val STATE_CHANGE_EVENT = "onPipCaptionsStateChange"
     private const val DURATION_TICK_INTERVAL_MS = 1000L
     private const val REGULAR_TRANSCRIPT_HEIGHT_DP = 150
     private const val MINI_TRANSCRIPT_HEIGHT_DP = 64
